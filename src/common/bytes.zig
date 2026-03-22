@@ -42,11 +42,22 @@ pub fn bytesToHex(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
     return try fmt.allocPrint(allocator, "{x}", .{fmt.fmtSliceHexLower(input)});
 }
 
+pub fn bytesIntoHex(out: []u8, input: []const u8) ![]u8 {
+    return try fmt.bufPrint(out, "{x}", .{fmt.fmtSliceHexLower(input)});
+}
+
 pub fn hexToBytes(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
     const out = try allocator.alloc(u8, input.len / 2);
     errdefer allocator.free(out);
     _ = try fmt.hexToBytes(out, input);
     return out;
+}
+
+pub fn hexIntoBytes(out: []u8, input: []const u8) ![]u8 {
+    if (has0xPrefix(input)) {
+        return try fmt.hexToBytes(out, input[2..]);
+    }
+    return try fmt.hexToBytes(out, input);
 }
 
 pub fn hexToBytesFixed(allocator: std.mem.Allocator, input: []const u8, fixed_len: usize) ![]u8 {
