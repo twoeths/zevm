@@ -2,8 +2,8 @@
 //! you are building an executable. If you are making a library, the convention
 //! is to delete this file and start with root.zig instead.
 const std = @import("std");
-pub const stack = @import("stack.zig");
-pub const Stack = stack.Stack;
+pub const vm = @import("vm/root.zig");
+pub const Stack = vm.Stack;
 
 pub fn main() !void {
     // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)

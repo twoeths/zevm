@@ -1,6 +1,6 @@
-pub const stack = @import("stack.zig");
-pub const Stack = stack.Stack;
+pub const vm = @import("vm/root.zig");
+pub const Stack = vm.Stack;
 
 test {
-    _ = @import("stack.zig");
+    _ = @import("vm/root.zig");
 }

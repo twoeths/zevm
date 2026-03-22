@@ -13,6 +13,9 @@
         .core = .{
             .root_source_file = "src/root.zig",
         },
+        .vm = .{
+            .root_source_file = "src/vm/root.zig",
+        },
     },
     .executables = .{
         .zevm = .{

@@ -13,6 +13,13 @@ pub fn build(b: *std.Build) void {
     });
     b.modules.put(b.dupe("core"), module_core) catch @panic("OOM");
 
+    const module_vm = b.createModule(.{
+        .root_source_file = b.path("src/vm/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    b.modules.put(b.dupe("vm"), module_vm) catch @panic("OOM");
+
     const module_zevm = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -51,6 +58,20 @@ pub fn build(b: *std.Build) void {
     const tls_run_test_core = b.step("test:core", "Run the core test");
     tls_run_test_core.dependOn(&run_test_core.step);
     tls_run_test.dependOn(&run_test_core.step);
+
+    const test_vm = b.addTest(.{
+        .name = "vm",
+        .root_module = module_vm,
+        .filters = b.option([][]const u8, "vm.filters", "vm test filters") orelse &[_][]const u8{},
+    });
+    const install_test_vm = b.addInstallArtifact(test_vm, .{});
+    const tls_install_test_vm = b.step("build-test:vm", "Install the vm test");
+    tls_install_test_vm.dependOn(&install_test_vm.step);
+
+    const run_test_vm = b.addRunArtifact(test_vm);
+    const tls_run_test_vm = b.step("test:vm", "Run the vm test");
+    tls_run_test_vm.dependOn(&run_test_vm.step);
+    tls_run_test.dependOn(&run_test_vm.step);
 
     const test_zevm = b.addTest(.{
         .name = "zevm",
