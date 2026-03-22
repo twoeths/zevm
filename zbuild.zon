@@ -1,16 +1,36 @@
 .{
-    .name = "zevm",
+    .name = .zevm,
     .version = "0.1.0",
-    .fingerprint = 0x{ 30, 78, 32, 31, 62, 63, 35, 35, 62, 61, 34, 30, 36, 63, 34, 62, 31, 38 },
+    .fingerprint = 0x21bc55ba406c4b18,
     .minimum_zig_version = "0.14.1",
     .paths = .{
         "build.zig",
         "build.zig.zon",
         "src",
+        "test",
+    },
+    .modules = .{
+        .core = .{
+            .root_source_file = "src/root.zig",
+        },
     },
     .executables = .{
         .zevm = .{
             .root_module = .{ .root_source_file = "src/main.zig" },
+        },
+    },
+    .tests = .{
+        .unit = .{
+            .root_module = .{
+                .root_source_file = "src/root.zig",
+            },
+            .filters = .{},
+        },
+        .spec = .{
+            .root_module = .{
+                .root_source_file = "test/spec/root.zig",
+            },
+            .filters = .{},
         },
     },
 }
