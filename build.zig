@@ -6,6 +6,13 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const module_common = b.createModule(.{
+        .root_source_file = b.path("src/common/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    b.modules.put(b.dupe("common"), module_common) catch @panic("OOM");
+
     const module_core = b.createModule(.{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
@@ -44,6 +51,20 @@ pub fn build(b: *std.Build) void {
     tls_run_exe_zevm.dependOn(&run_exe_zevm.step);
 
     const tls_run_test = b.step("test", "Run all tests");
+
+    const test_common = b.addTest(.{
+        .name = "common",
+        .root_module = module_common,
+        .filters = b.option([][]const u8, "common.filters", "common test filters") orelse &[_][]const u8{},
+    });
+    const install_test_common = b.addInstallArtifact(test_common, .{});
+    const tls_install_test_common = b.step("build-test:common", "Install the common test");
+    tls_install_test_common.dependOn(&install_test_common.step);
+
+    const run_test_common = b.addRunArtifact(test_common);
+    const tls_run_test_common = b.step("test:common", "Run the common test");
+    tls_run_test_common.dependOn(&run_test_common.step);
+    tls_run_test.dependOn(&run_test_common.step);
 
     const test_core = b.addTest(.{
         .name = "core",

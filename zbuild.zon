@@ -10,6 +10,9 @@
         "test",
     },
     .modules = .{
+        .common = .{
+            .root_source_file = "src/common/root.zig",
+        },
         .core = .{
             .root_source_file = "src/root.zig",
         },
