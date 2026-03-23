@@ -2,7 +2,7 @@
 //! you are building an executable. If you are making a library, the convention
 //! is to delete this file and start with root.zig instead.
 const std = @import("std");
-pub const common = @import("common/root.zig");
+pub const common = @import("common");
 pub const vm = @import("vm/root.zig");
 pub const Stack = vm.Stack;
 

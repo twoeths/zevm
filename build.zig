@@ -149,4 +149,12 @@ pub fn build(b: *std.Build) void {
     const tls_run_test_spec = b.step("test:spec", "Run the spec test");
     tls_run_test_spec.dependOn(&run_test_spec.step);
     tls_run_test.dependOn(&run_test_spec.step);
+
+    module_core.addImport("common", module_common);
+
+    module_vm.addImport("common", module_common);
+
+    module_zevm.addImport("common", module_common);
+
+    module_unit.addImport("common", module_common);
 }

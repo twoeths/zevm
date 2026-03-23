@@ -15,20 +15,26 @@
         },
         .core = .{
             .root_source_file = "src/root.zig",
+            .imports = .{.common},
         },
         .vm = .{
             .root_source_file = "src/vm/root.zig",
+            .imports = .{.common},
         },
     },
     .executables = .{
         .zevm = .{
-            .root_module = .{ .root_source_file = "src/main.zig" },
+            .root_module = .{
+                .root_source_file = "src/main.zig",
+                .imports = .{.common},
+            },
         },
     },
     .tests = .{
         .unit = .{
             .root_module = .{
                 .root_source_file = "src/root.zig",
+                .imports = .{.common},
             },
             .filters = .{},
         },

@@ -10,31 +10,36 @@ const set_5_bits_mask: u16 = 0b1_1111;
 const set_6_bits_mask: u16 = 0b11_1111;
 const set_7_bits_mask: u16 = 0b111_1111;
 
-pub const BitVector = struct {
+/// CodeBitmap marks each byte position in EVM bytecode as either opcode-space
+/// or PUSH-data. A set bit means PUSH-data, and an unset bit means a real
+/// opcode byte. `JUMPDEST` validity is checked by combining this bitmap with an
+/// opcode check for the `JUMPDEST` byte. The bitmap itself is just a thin
+/// wrapper over storage; ownership depends on the producer that returned it.
+pub const CodeBitmap = struct {
     bits: []u8,
 
-    pub fn init(allocator: std.mem.Allocator, code_len: usize) !BitVector {
+    pub fn init(allocator: std.mem.Allocator, code_len: usize) !CodeBitmap {
         const bits = try allocator.alloc(u8, bitmapLen(code_len));
         @memset(bits, 0);
         return .{ .bits = bits };
     }
 
-    pub fn deinit(self: BitVector, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: CodeBitmap, allocator: std.mem.Allocator) void {
         allocator.free(self.bits);
     }
 
-    pub fn asSlice(self: BitVector) []u8 {
+    pub fn asSlice(self: CodeBitmap) []u8 {
         return self.bits;
     }
 
-    pub fn codeSegment(self: BitVector, pos: usize) bool {
+    pub fn codeSegment(self: CodeBitmap, pos: usize) bool {
         return ((self.bits[pos / 8] >> @intCast(pos % 8)) & 1) == 0;
     }
 
-    pub fn fromCode(allocator: std.mem.Allocator, code: []const u8) !BitVector {
-        const bit_vector = try init(allocator, code.len);
-        _ = codeBitmapInto(code, bit_vector.bits);
-        return bit_vector;
+    pub fn fromCode(allocator: std.mem.Allocator, code: []const u8) !CodeBitmap {
+        const bitmap = try init(allocator, code.len);
+        _ = codeIntoBitmap(code, bitmap.bits);
+        return bitmap;
     }
 };
 
@@ -42,11 +47,15 @@ pub fn bitmapLen(code_len: usize) usize {
     return code_len / 8 + 5;
 }
 
-pub fn codeBitmap(allocator: std.mem.Allocator, code: []const u8) !BitVector {
-    return BitVector.fromCode(allocator, code);
+pub fn codeBitmap(allocator: std.mem.Allocator, code: []const u8) !CodeBitmap {
+    return CodeBitmap.fromCode(allocator, code);
 }
 
-pub fn codeBitmapInto(code: []const u8, bits: []u8) []u8 {
+/// Marks PUSH-data bytes in `code` as 1 into caller-provided bitmap storage.
+/// Real opcode bytes, including `JUMPDEST`, remain 0.
+/// A valid jump destination is therefore a byte that is both opcode-space
+/// according to this bitmap and equal to the `JUMPDEST` opcode.
+pub fn codeIntoBitmap(code: []const u8, bits: []u8) []u8 {
     std.debug.assert(bits.len >= bitmapLen(code.len));
     @memset(bits, 0);
 
@@ -137,27 +146,27 @@ test "code bitmap marks push data bytes as data segments" {
     const allocator = std.testing.allocator;
     const code = [_]u8{ 0x60, 0xaa, 0x7f } ++ [_]u8{0xbb} ** 32;
 
-    const bit_vector = try codeBitmap(allocator, &code);
-    defer bit_vector.deinit(allocator);
+    const bitmap = try codeBitmap(allocator, &code);
+    defer bitmap.deinit(allocator);
 
-    try std.testing.expect(bit_vector.codeSegment(0));
-    try std.testing.expect(!bit_vector.codeSegment(1));
-    try std.testing.expect(bit_vector.codeSegment(2));
+    try std.testing.expect(bitmap.codeSegment(0));
+    try std.testing.expect(!bitmap.codeSegment(1));
+    try std.testing.expect(bitmap.codeSegment(2));
 
     var i: usize = 0;
     while (i < 32) : (i += 1) {
-        try std.testing.expect(!bit_vector.codeSegment(3 + i));
+        try std.testing.expect(!bitmap.codeSegment(3 + i));
     }
 }
 
-test "codeBitmapInto reuses caller-provided storage" {
+test "codeIntoBitmap reuses caller-provided storage" {
     const code = [_]u8{ 0x61, 0xaa, 0xbb, 0x00 };
     var storage = [_]u8{0xaa} ** bitmapLen(code.len);
-    const bits = codeBitmapInto(&code, &storage);
-    const bit_vector = BitVector{ .bits = bits };
+    const bits = codeIntoBitmap(&code, &storage);
+    const bitmap = CodeBitmap{ .bits = bits };
 
     try std.testing.expect(bits[0] != 0xaa);
-    try std.testing.expect(!bit_vector.codeSegment(1));
-    try std.testing.expect(!bit_vector.codeSegment(2));
-    try std.testing.expect(bit_vector.codeSegment(3));
+    try std.testing.expect(!bitmap.codeSegment(1));
+    try std.testing.expect(!bitmap.codeSegment(2));
+    try std.testing.expect(bitmap.codeSegment(3));
 }
