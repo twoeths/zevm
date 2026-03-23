@@ -1,0 +1,25 @@
+pub const GasChangeReason = enum(u8) {
+    Unspecified = 0,
+    TxInitialBalance = 1,
+    TxIntrinsicGas = 2,
+    TxRefunds = 3,
+    TxLeftOverReturned = 4,
+    CallInitialBalance = 5,
+    CallLeftOverReturned = 6,
+    CallLeftOverRefunded = 7,
+    CallContractCreation = 8,
+    CallContractCreation2 = 9,
+    CallCodeStorage = 10,
+    CallOpCode = 11,
+    CallPrecompiledContract = 12,
+    CallStorageColdAccess = 13,
+    CallFailedExecution = 14,
+    WitnessContractInit = 15,
+    WitnessContractCreation = 16,
+    WitnessCodeChunk = 17,
+    WitnessContractCollisionCheck = 18,
+    TxDataFloor = 19,
+    Ignored = 0xff,
+};
+
+// TODO zevm: implement tracing.Hooks.

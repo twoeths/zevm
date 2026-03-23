@@ -5,6 +5,7 @@ const std = @import("std");
 pub const common = @import("common");
 pub const vm = @import("vm/root.zig");
 pub const Stack = vm.Stack;
+pub const Contract = vm.Contract;
 
 pub fn main() !void {
     // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
