@@ -19,7 +19,8 @@ pub const Contract = struct {
     address: common.Address = .{},
 
     // Aggregated result of JUMPDEST analysis.
-    jump_dests: JumpDestCache = .{},
+    // Borrowed from the owning EVM/cache lifecycle.
+    jump_dests: *JumpDestCache,
     // Locally cached result of JUMPDEST analysis.
     // In Zig this may either borrow storage owned by `jump_dests` or point at
     // contract-local allocated storage for initcode analysis, so ownership must
@@ -41,10 +42,10 @@ pub const Contract = struct {
     gas: u64 = 0,
     value: Word = 0,
 
-    pub fn init(allocator: std.mem.Allocator) Contract {
+    pub fn init(allocator: std.mem.Allocator, jump_dests: *JumpDestCache) Contract {
         return .{
             .allocator = allocator,
-            .jump_dests = JumpDestCache.init(),
+            .jump_dests = jump_dests,
         };
     }
 
@@ -52,7 +53,7 @@ pub const Contract = struct {
         if (self.owns_analysis) {
             self.analysis.?.deinit(self.allocator);
         }
-        self.jump_dests.deinit(self.allocator);
+        // do not deinit jump_dests since it's shared storage owned by the evm.
         self.analysis = null;
         self.owns_analysis = false;
     }
@@ -123,7 +124,9 @@ pub const Contract = struct {
 };
 
 test "useGas subtracts gas when enough balance exists" {
-    var contract = Contract.init(std.testing.allocator);
+    var jump_dests = JumpDestCache.init();
+    defer jump_dests.deinit(std.testing.allocator);
+    var contract = Contract.init(std.testing.allocator, &jump_dests);
     defer contract.deinit();
     contract.gas = 10;
 
@@ -132,7 +135,9 @@ test "useGas subtracts gas when enough balance exists" {
 }
 
 test "useGas leaves gas unchanged on insufficient balance" {
-    var contract = Contract.init(std.testing.allocator);
+    var jump_dests = JumpDestCache.init();
+    defer jump_dests.deinit(std.testing.allocator);
+    var contract = Contract.init(std.testing.allocator, &jump_dests);
     defer contract.deinit();
     contract.gas = 3;
 
@@ -141,7 +146,9 @@ test "useGas leaves gas unchanged on insufficient balance" {
 }
 
 test "refundGas adds gas and ignores zero refunds" {
-    var contract = Contract.init(std.testing.allocator);
+    var jump_dests = JumpDestCache.init();
+    defer jump_dests.deinit(std.testing.allocator);
+    var contract = Contract.init(std.testing.allocator, &jump_dests);
     defer contract.deinit();
     contract.gas = 5;
 
@@ -156,7 +163,9 @@ test "validJumpdest accepts opcode-space jumpdest from cached code hash analysis
     const allocator = std.testing.allocator;
     const code = [_]u8{ 0x60, 0xaa, JUMPDEST_OPCODE };
     const hash = try common.hexToHash("0x00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff");
-    var contract = Contract.init(allocator);
+    var jump_dests = JumpDestCache.init();
+    defer jump_dests.deinit(allocator);
+    var contract = Contract.init(allocator, &jump_dests);
     defer contract.deinit();
     contract.code = &code;
     contract.code_hash = hash;
@@ -167,7 +176,9 @@ test "validJumpdest accepts opcode-space jumpdest from cached code hash analysis
 
 test "validJumpdest rejects push-data jumpdest bytes" {
     const allocator = std.testing.allocator;
-    var contract = Contract.init(allocator);
+    var jump_dests = JumpDestCache.init();
+    defer jump_dests.deinit(allocator);
+    var contract = Contract.init(allocator, &jump_dests);
     defer contract.deinit();
     contract.code = &[_]u8{ 0x61, JUMPDEST_OPCODE, 0x00 };
 
@@ -177,7 +188,9 @@ test "validJumpdest rejects push-data jumpdest bytes" {
 
 test "validJumpdest computes local analysis for initcode" {
     const allocator = std.testing.allocator;
-    var contract = Contract.init(allocator);
+    var jump_dests = JumpDestCache.init();
+    defer jump_dests.deinit(allocator);
+    var contract = Contract.init(allocator, &jump_dests);
     defer contract.deinit();
     contract.code = &[_]u8{ 0x60, 0xaa, JUMPDEST_OPCODE };
 
