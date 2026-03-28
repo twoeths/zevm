@@ -4,8 +4,7 @@ const CodeBitmap = @import("code_bitmap.zig").CodeBitmap;
 const JumpDestCache = @import("jump_dest_cache.zig").JumpDestCache;
 const Word = @import("stack.zig").Word;
 const GasChangeReason = @import("tracing/gas_change_reason.zig").GasChangeReason;
-// TODO zevm: move opcode constants into vm/opcodes.zig.
-const JUMPDEST_OPCODE: u8 = 0x5b;
+const JUMPDEST_OPCODE: u8 = @intFromEnum(@import("opcodes.zig").OpCode.JUMPDEST);
 
 /// Contract represents an Ethereum contract in the state database. It contains
 /// the contract code and calling arguments.

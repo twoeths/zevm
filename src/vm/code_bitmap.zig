@@ -1,7 +1,8 @@
 const std = @import("std");
 
-const push1: u8 = 0x60;
-const push32: u8 = 0x7f;
+const OpCode = @import("opcodes.zig").OpCode;
+const push1: u8  = @intFromEnum(OpCode.PUSH1);
+const push32: u8 = @intFromEnum(OpCode.PUSH32);
 
 const set_2_bits_mask: u16 = 0b11;
 const set_3_bits_mask: u16 = 0b111;

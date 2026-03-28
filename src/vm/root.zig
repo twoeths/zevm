@@ -13,6 +13,12 @@ pub const memory = @import("memory.zig");
 pub const Memory = memory.Memory;
 pub const interpreter = @import("interpreter.zig");
 pub const ScopeContext = interpreter.ScopeContext;
+pub const opcodes = @import("opcodes.zig");
+pub const OpCode = opcodes.OpCode;
+pub const jump_table = @import("jump_table.zig");
+pub const JumpTable = jump_table.JumpTable;
+pub const Operation = jump_table.Operation;
+pub const Fork = jump_table.Fork;
 pub const tracing = struct {
     pub const gas_change_reason = @import("tracing/gas_change_reason.zig");
     pub const GasChangeReason = gas_change_reason.GasChangeReason;
@@ -25,5 +31,7 @@ test {
     _ = @import("contract.zig");
     _ = @import("memory.zig");
     _ = @import("interpreter.zig");
+    _ = @import("opcodes.zig");
+    _ = @import("jump_table.zig");
     _ = @import("tracing/gas_change_reason.zig");
 }
