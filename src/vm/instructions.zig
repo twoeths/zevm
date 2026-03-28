@@ -93,6 +93,19 @@ pub fn opSmod(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     return null;
 }
 
+/// ADDMOD (0x08): pop x, pop y, peek z, z = (x + y) % z. Returns 0 if z == 0.
+/// Addition is performed in u512 to avoid overflow before the modulo.
+pub fn opAddmod(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = .{ pc, evm };
+    const x = scope.stack.pop();
+    const y = scope.stack.pop();
+    const z = scope.stack.peek();
+    if (z.* == 0) return null;
+    const sum: u512 = @as(u512, x) + @as(u512, y);
+    z.* = @intCast(sum % @as(u512, z.*));
+    return null;
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 test "opAdd: 2 + 3 = 5" {
@@ -384,6 +397,66 @@ test "opSmod: modulo by zero returns 0" {
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
     _ = try opSmod(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
+}
+
+test "opAddmod: (2 + 3) % 4 = 1" {
+    const allocator = std.testing.allocator;
+    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
+    defer jump_dests.deinit(allocator);
+    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack = @import("stack.zig").Stack{};
+    defer stack.deinit(allocator);
+    try stack.push(allocator, 4); // z (modulus) — pushed first, deepest
+    try stack.push(allocator, 3); // y
+    try stack.push(allocator, 2); // x — top
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+    const evm_placeholder: u8 = 0;
+    _ = try opAddmod(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    try std.testing.expectEqual(@as(u256, 1), scope.stack.peek().*);
+}
+
+test "opAddmod: overflow sum (maxInt + 1) % 2 = 0" {
+    const allocator = std.testing.allocator;
+    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
+    defer jump_dests.deinit(allocator);
+    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack = @import("stack.zig").Stack{};
+    defer stack.deinit(allocator);
+    try stack.push(allocator, 2);                    // z
+    try stack.push(allocator, 1);                    // y
+    try stack.push(allocator, std.math.maxInt(u256)); // x
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+    const evm_placeholder: u8 = 0;
+    _ = try opAddmod(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
+}
+
+test "opAddmod: modulus zero returns 0" {
+    const allocator = std.testing.allocator;
+    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
+    defer jump_dests.deinit(allocator);
+    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack = @import("stack.zig").Stack{};
+    defer stack.deinit(allocator);
+    try stack.push(allocator, 0);  // z
+    try stack.push(allocator, 3);  // y
+    try stack.push(allocator, 2);  // x
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+    const evm_placeholder: u8 = 0;
+    _ = try opAddmod(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
     try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
 }
 
