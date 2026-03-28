@@ -72,6 +72,27 @@ pub fn opSdiv(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     return null;
 }
 
+/// MOD (0x06): pop x, peek y, y = x % y unsigned. Returns 0 if y == 0.
+pub fn opMod(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = .{ pc, evm };
+    const x = scope.stack.pop();
+    const y = scope.stack.peek();
+    y.* = if (y.* == 0) 0 else x % y.*;
+    return null;
+}
+
+/// SMOD (0x07): pop x, peek y, y = x % y signed. Result has same sign as x. Returns 0 if y == 0.
+pub fn opSmod(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = .{ pc, evm };
+    const x = scope.stack.pop();
+    const y = scope.stack.peek();
+    if (y.* == 0) return null;
+    const sx: i256 = @bitCast(x);
+    const sy: i256 = @bitCast(y.*);
+    y.* = @bitCast(@rem(sx, sy));
+    return null;
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 test "opAdd: 2 + 3 = 5" {
@@ -286,6 +307,84 @@ test "opSdiv: INT256_MIN / -1 returns INT256_MIN" {
     const evm_placeholder: u8 = 0;
     _ = try opSdiv(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
     try std.testing.expectEqual(int256_min, scope.stack.peek().*);
+}
+
+test "opMod: 10 % 3 = 1" {
+    const allocator = std.testing.allocator;
+    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
+    defer jump_dests.deinit(allocator);
+    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack = @import("stack.zig").Stack{};
+    defer stack.deinit(allocator);
+    try stack.push(allocator, 3);
+    try stack.push(allocator, 10);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+    const evm_placeholder: u8 = 0;
+    _ = try opMod(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    try std.testing.expectEqual(@as(u256, 1), scope.stack.peek().*);
+}
+
+test "opMod: modulo by zero returns 0" {
+    const allocator = std.testing.allocator;
+    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
+    defer jump_dests.deinit(allocator);
+    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack = @import("stack.zig").Stack{};
+    defer stack.deinit(allocator);
+    try stack.push(allocator, 0);
+    try stack.push(allocator, 42);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+    const evm_placeholder: u8 = 0;
+    _ = try opMod(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
+}
+
+test "opSmod: -10 % 3 = -1" {
+    const allocator = std.testing.allocator;
+    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
+    defer jump_dests.deinit(allocator);
+    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack = @import("stack.zig").Stack{};
+    defer stack.deinit(allocator);
+    const neg10: u256 = @bitCast(@as(i256, -10));
+    try stack.push(allocator, 3);
+    try stack.push(allocator, neg10);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+    const evm_placeholder: u8 = 0;
+    _ = try opSmod(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    const result: i256 = @bitCast(scope.stack.peek().*);
+    try std.testing.expectEqual(@as(i256, -1), result);
+}
+
+test "opSmod: modulo by zero returns 0" {
+    const allocator = std.testing.allocator;
+    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
+    defer jump_dests.deinit(allocator);
+    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack = @import("stack.zig").Stack{};
+    defer stack.deinit(allocator);
+    try stack.push(allocator, 0);
+    try stack.push(allocator, 42);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+    const evm_placeholder: u8 = 0;
+    _ = try opSmod(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
 }
 
 test "opStop returns StopToken" {
