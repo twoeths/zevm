@@ -19,6 +19,7 @@ pub const jump_table = @import("jump_table.zig");
 pub const JumpTable = jump_table.JumpTable;
 pub const Operation = jump_table.Operation;
 pub const Fork = jump_table.Fork;
+pub const ExecError = @import("instructions.zig").ExecError;
 pub const tracing = struct {
     pub const gas_change_reason = @import("tracing/gas_change_reason.zig");
     pub const GasChangeReason = gas_change_reason.GasChangeReason;
@@ -33,5 +34,6 @@ test {
     _ = @import("interpreter.zig");
     _ = @import("opcodes.zig");
     _ = @import("jump_table.zig");
+    _ = @import("instructions.zig");
     _ = @import("tracing/gas_change_reason.zig");
 }

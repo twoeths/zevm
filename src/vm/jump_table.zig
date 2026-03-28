@@ -5,11 +5,14 @@ const Stack     = stack_mod.Stack;
 const Memory    = @import("memory.zig").Memory;
 const Contract  = @import("contract.zig").Contract;
 const ScopeContext = @import("interpreter.zig").ScopeContext;
+const instructions = @import("instructions.zig");
 
 /// Forward-declared opaque for the EVM context; replaced with a concrete type once evm.zig exists.
 pub const Evm = anyopaque;
 
-pub const ExecuteFn = *const fn (pc: *u64, evm: *Evm, scope: *ScopeContext) anyerror!?[]u8;
+const ExecError = instructions.ExecError;
+
+pub const ExecuteFn = *const fn (pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8;
 pub const GasFn     = *const fn (evm: *Evm, contract: *Contract, stack: *Stack, mem: *Memory, mem_size: u64) anyerror!u64;
 
 pub const MemorySize = struct { size: u64, overflow: bool };
@@ -48,13 +51,13 @@ pub fn maxSwapStack(n: u16) u16 { return maxStack(n + 1, n + 1); }
 
 /// Sentinel execute for inactive slots (byte not assigned to any opcode in this fork).
 /// Discriminant: op.execute_fn == opUndefined → not a real opcode.
-pub fn opUndefined(pc: *u64, evm: *Evm, scope: *ScopeContext) anyerror!?[]u8 {
+pub fn opUndefined(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     _ = .{ pc, evm, scope };
     return error.InvalidOpcode;
 }
 
 /// Execute stub for defined opcodes whose logic is not yet written.
-pub fn opNotImplemented(pc: *u64, evm: *Evm, scope: *ScopeContext) anyerror!?[]u8 {
+pub fn opNotImplemented(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     _ = .{ pc, evm, scope };
     @panic("opcode not yet implemented");
 }
@@ -144,7 +147,7 @@ const inactive = Operation{
 pub const frontier: JumpTable = blk: {
     var t = [_]Operation{inactive} ** 256;
 
-    t[@intFromEnum(OpCode.STOP)]       = .{ .execute_fn = opNotImplemented, .constant_gas = gas_quick_step,   .min_stack = minStack(0, 0), .max_stack = maxStack(0, 0) };
+    t[@intFromEnum(OpCode.STOP)]       = .{ .execute_fn = instructions.opStop, .constant_gas = gas_quick_step,   .min_stack = minStack(0, 0), .max_stack = maxStack(0, 0) };
     t[@intFromEnum(OpCode.ADD)]        = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
     t[@intFromEnum(OpCode.MUL)]        = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fast_step,    .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
     t[@intFromEnum(OpCode.SUB)]        = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
