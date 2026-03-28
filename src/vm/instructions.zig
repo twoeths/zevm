@@ -119,6 +119,22 @@ pub fn opMulmod(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     return null;
 }
 
+/// EXP (0x0a): pop base, peek exponent, exponent = base ** exponent (mod 2^256).
+/// Uses binary exponentiation with wrapping multiplies.
+pub fn opExp(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = .{ pc, evm };
+    var base = scope.stack.pop();
+    const exp = scope.stack.peek();
+    var e = exp.*;
+    var result: u256 = 1;
+    while (e != 0) : (e >>= 1) {
+        if (e & 1 != 0) result *%= base;
+        base *%= base;
+    }
+    exp.* = result;
+    return null;
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 test "opAdd: 2 + 3 = 5" {
@@ -533,6 +549,63 @@ test "opMulmod: modulus zero returns 0" {
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
     _ = try opMulmod(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
+}
+
+test "opExp: 2 ** 10 = 1024" {
+    const allocator = std.testing.allocator;
+    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
+    defer jump_dests.deinit(allocator);
+    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack = @import("stack.zig").Stack{};
+    defer stack.deinit(allocator);
+    try stack.push(allocator, 10); // exponent
+    try stack.push(allocator, 2);  // base — top
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+    const evm_placeholder: u8 = 0;
+    _ = try opExp(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    try std.testing.expectEqual(@as(u256, 1024), scope.stack.peek().*);
+}
+
+test "opExp: x ** 0 = 1" {
+    const allocator = std.testing.allocator;
+    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
+    defer jump_dests.deinit(allocator);
+    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack = @import("stack.zig").Stack{};
+    defer stack.deinit(allocator);
+    try stack.push(allocator, 0);  // exponent
+    try stack.push(allocator, 42); // base
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+    const evm_placeholder: u8 = 0;
+    _ = try opExp(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    try std.testing.expectEqual(@as(u256, 1), scope.stack.peek().*);
+}
+
+test "opExp: 2 ** 256 wraps to 0" {
+    const allocator = std.testing.allocator;
+    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
+    defer jump_dests.deinit(allocator);
+    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack = @import("stack.zig").Stack{};
+    defer stack.deinit(allocator);
+    try stack.push(allocator, 256); // exponent
+    try stack.push(allocator, 2);   // base
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+    const evm_placeholder: u8 = 0;
+    _ = try opExp(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
     try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
 }
 
