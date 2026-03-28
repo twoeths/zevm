@@ -148,11 +148,11 @@ pub const frontier: JumpTable = blk: {
     var t = [_]Operation{inactive} ** 256;
 
     t[@intFromEnum(OpCode.STOP)]       = .{ .execute_fn = instructions.opStop, .constant_gas = gas_quick_step,   .min_stack = minStack(0, 0), .max_stack = maxStack(0, 0) };
-    t[@intFromEnum(OpCode.ADD)]        = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
-    t[@intFromEnum(OpCode.MUL)]        = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fast_step,    .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
-    t[@intFromEnum(OpCode.SUB)]        = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
-    t[@intFromEnum(OpCode.DIV)]        = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fast_step,    .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
-    t[@intFromEnum(OpCode.SDIV)]       = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fast_step,    .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
+    t[@intFromEnum(OpCode.ADD)]        = .{ .execute_fn = instructions.opAdd, .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
+    t[@intFromEnum(OpCode.MUL)]        = .{ .execute_fn = instructions.opMul, .constant_gas = gas_fast_step,    .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
+    t[@intFromEnum(OpCode.SUB)]        = .{ .execute_fn = instructions.opSub, .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
+    t[@intFromEnum(OpCode.DIV)]        = .{ .execute_fn = instructions.opDiv,  .constant_gas = gas_fast_step,    .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
+    t[@intFromEnum(OpCode.SDIV)]       = .{ .execute_fn = instructions.opSdiv, .constant_gas = gas_fast_step,    .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
     t[@intFromEnum(OpCode.MOD)]        = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fast_step,    .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
     t[@intFromEnum(OpCode.SMOD)]       = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fast_step,    .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
     t[@intFromEnum(OpCode.ADDMOD)]     = .{ .execute_fn = opNotImplemented, .constant_gas = gas_mid_step,     .min_stack = minStack(3, 1), .max_stack = maxStack(3, 1) };
