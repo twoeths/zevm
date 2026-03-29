@@ -59,10 +59,10 @@ test "scope context exposes memory, stack, and contract-backed accessors" {
     try memory.resize(4);
     memory.set(0, 4, "mem!");
 
-    var stack = Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 11);
-    try stack.push(allocator, 22);
+    var stack_buf: [@import("stack.zig").max_size]Word = undefined;
+    var stack = Stack.init(&stack_buf);
+    stack.push(11);
+    stack.push(22);
 
     const scope = ScopeContext{
         .memory = &memory,

@@ -292,6 +292,18 @@ pub fn opSar(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     return null;
 }
 
+// ── Block info ────────────────────────────────────────────────────────────────
+
+/// ADDRESS (0x30): push the address of the currently executing contract.
+pub fn opAddress(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = .{ pc, evm };
+    var buf = [_]u8{0} ** 32;
+    const addr = scope.contract.address.bytes;
+    @memcpy(buf[12..], &addr);
+    scope.stack.push(std.mem.readInt(u256, &buf, .big));
+    return null;
+}
+
 // ── Hash ──────────────────────────────────────────────────────────────────────
 
 /// KECCAK256 (0x20): pop offset, peek size, size = keccak256(memory[offset..offset+size]).
@@ -309,6 +321,25 @@ pub fn opKeccak256(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
+test "opAddress: pushes contract address as u256" {
+    const allocator = std.testing.allocator;
+    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
+    defer jump_dests.deinit(allocator);
+    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    defer contract.deinit();
+    contract.address = .{ .bytes = [_]u8{0} ** 12 ++ [_]u8{ 0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xba, 0xbe } };
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+    const evm_placeholder: u8 = 0;
+    _ = try opAddress(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    const expected: u256 = 0xdeadbeefcafebabe;
+    try std.testing.expectEqual(expected, scope.stack.peek().*);
+}
+
 test "opAdd: 2 + 3 = 5" {
     const allocator = std.testing.allocator;
     var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
@@ -317,10 +348,10 @@ test "opAdd: 2 + 3 = 5" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 2);
-    try stack.push(allocator, 3);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(2);
+    stack.push(3);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -336,10 +367,10 @@ test "opAdd: wraps at 2^256" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, std.math.maxInt(u256));
-    try stack.push(allocator, 1);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(std.math.maxInt(u256));
+    stack.push(1);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -355,10 +386,10 @@ test "opSub: 10 - 3 = 7" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 3);
-    try stack.push(allocator, 10);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(3);
+    stack.push(10);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -374,10 +405,10 @@ test "opSub: wraps at 2^256" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 1);
-    try stack.push(allocator, 0);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(1);
+    stack.push(0);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -393,10 +424,10 @@ test "opMul: 6 * 7 = 42" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 7);
-    try stack.push(allocator, 6);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(7);
+    stack.push(6);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -412,10 +443,10 @@ test "opMul: wraps at 2^256" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 2);
-    try stack.push(allocator, std.math.maxInt(u256));
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(2);
+    stack.push(std.math.maxInt(u256));
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -432,10 +463,10 @@ test "opDiv: 10 / 3 = 3" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 3);
-    try stack.push(allocator, 10);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(3);
+    stack.push(10);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -451,10 +482,10 @@ test "opDiv: divide by zero returns 0" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 0);
-    try stack.push(allocator, 42);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0);
+    stack.push(42);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -470,11 +501,11 @@ test "opSdiv: -10 / 3 = -3" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
     const neg10: u256 = @bitCast(@as(i256, -10));
-    try stack.push(allocator, 3);
-    try stack.push(allocator, neg10);
+    stack.push(3);
+    stack.push(neg10);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -491,10 +522,10 @@ test "opSdiv: divide by zero returns 0" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 0);
-    try stack.push(allocator, 42);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0);
+    stack.push(42);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -510,12 +541,12 @@ test "opSdiv: INT256_MIN / -1 returns INT256_MIN" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
     const int256_min: u256 = @bitCast(@as(i256, std.math.minInt(i256)));
     const neg1: u256 = @bitCast(@as(i256, -1));
-    try stack.push(allocator, neg1);
-    try stack.push(allocator, int256_min);
+    stack.push(neg1);
+    stack.push(int256_min);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -531,10 +562,10 @@ test "opMod: 10 % 3 = 1" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 3);
-    try stack.push(allocator, 10);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(3);
+    stack.push(10);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -550,10 +581,10 @@ test "opMod: modulo by zero returns 0" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 0);
-    try stack.push(allocator, 42);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0);
+    stack.push(42);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -569,11 +600,11 @@ test "opSmod: -10 % 3 = -1" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
     const neg10: u256 = @bitCast(@as(i256, -10));
-    try stack.push(allocator, 3);
-    try stack.push(allocator, neg10);
+    stack.push(3);
+    stack.push(neg10);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -590,10 +621,10 @@ test "opSmod: modulo by zero returns 0" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 0);
-    try stack.push(allocator, 42);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0);
+    stack.push(42);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -609,11 +640,11 @@ test "opAddmod: (2 + 3) % 4 = 1" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 4); // z (modulus) — pushed first, deepest
-    try stack.push(allocator, 3); // y
-    try stack.push(allocator, 2); // x — top
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(4); // z (modulus) — pushed first, deepest
+    stack.push(3); // y
+    stack.push(2); // x — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -629,11 +660,11 @@ test "opAddmod: overflow sum (maxInt + 1) % 2 = 0" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 2);                    // z
-    try stack.push(allocator, 1);                    // y
-    try stack.push(allocator, std.math.maxInt(u256)); // x
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(2);                    // z
+    stack.push(1);                    // y
+    stack.push(std.math.maxInt(u256)); // x
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -649,11 +680,11 @@ test "opAddmod: modulus zero returns 0" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 0);  // z
-    try stack.push(allocator, 3);  // y
-    try stack.push(allocator, 2);  // x
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0);  // z
+    stack.push(3);  // y
+    stack.push(2);  // x
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -669,11 +700,11 @@ test "opMulmod: (3 * 5) % 7 = 1" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 7); // z (modulus)
-    try stack.push(allocator, 5); // y
-    try stack.push(allocator, 3); // x — top
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(7); // z (modulus)
+    stack.push(5); // y
+    stack.push(3); // x — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -689,14 +720,14 @@ test "opMulmod: overflow product (2^128 * 2^128) % 3 = 1" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
     // 2^128 * 2^128 = 2^256, which overflows u256.
     // 2^256 mod 3: 2^256 = (2^2)^128 = 4^128 ≡ 1^128 = 1 (mod 3)
     const two_pow_128: u256 = 1 << 128;
-    try stack.push(allocator, 3);
-    try stack.push(allocator, two_pow_128);
-    try stack.push(allocator, two_pow_128);
+    stack.push(3);
+    stack.push(two_pow_128);
+    stack.push(two_pow_128);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -712,11 +743,11 @@ test "opMulmod: modulus zero returns 0" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 0); // z
-    try stack.push(allocator, 5); // y
-    try stack.push(allocator, 3); // x
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0); // z
+    stack.push(5); // y
+    stack.push(3); // x
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -732,10 +763,10 @@ test "opExp: 2 ** 10 = 1024" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 10); // exponent
-    try stack.push(allocator, 2);  // base — top
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(10); // exponent
+    stack.push(2);  // base — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -751,10 +782,10 @@ test "opExp: x ** 0 = 1" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 0);  // exponent
-    try stack.push(allocator, 42); // base
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0);  // exponent
+    stack.push(42); // base
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -770,10 +801,10 @@ test "opExp: 2 ** 256 wraps to 0" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 256); // exponent
-    try stack.push(allocator, 2);   // base
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(256); // exponent
+    stack.push(2);   // base
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -793,8 +824,8 @@ test "opStop returns StopToken" {
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
 
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
 
     var scope = ScopeContext{
         .memory   = &memory,
@@ -817,10 +848,10 @@ test "opLt: 3 < 5 = 1" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 5); // y
-    try stack.push(allocator, 3); // x — top
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(5); // y
+    stack.push(3); // x — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -836,10 +867,10 @@ test "opLt: 5 < 3 = 0" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 3); // y
-    try stack.push(allocator, 5); // x — top
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(3); // y
+    stack.push(5); // x — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -855,10 +886,10 @@ test "opGt: 5 > 3 = 1" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 3); // y
-    try stack.push(allocator, 5); // x — top
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(3); // y
+    stack.push(5); // x — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -874,10 +905,10 @@ test "opGt: 3 > 5 = 0" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 5); // y
-    try stack.push(allocator, 3); // x — top
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(5); // y
+    stack.push(3); // x — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -893,11 +924,11 @@ test "opSlt: -1 < 1 = 1" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
     const neg1: u256 = @bitCast(@as(i256, -1));
-    try stack.push(allocator, 1);    // y
-    try stack.push(allocator, neg1); // x — top
+    stack.push(1);    // y
+    stack.push(neg1); // x — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -913,11 +944,11 @@ test "opSlt: 1 < -1 = 0" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
     const neg1: u256 = @bitCast(@as(i256, -1));
-    try stack.push(allocator, neg1); // y
-    try stack.push(allocator, 1);    // x — top
+    stack.push(neg1); // y
+    stack.push(1);    // x — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -933,11 +964,11 @@ test "opSgt: 1 > -1 = 1" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
     const neg1: u256 = @bitCast(@as(i256, -1));
-    try stack.push(allocator, neg1); // y
-    try stack.push(allocator, 1);    // x — top
+    stack.push(neg1); // y
+    stack.push(1);    // x — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -953,11 +984,11 @@ test "opSgt: -1 > 1 = 0" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
     const neg1: u256 = @bitCast(@as(i256, -1));
-    try stack.push(allocator, 1);    // y
-    try stack.push(allocator, neg1); // x — top
+    stack.push(1);    // y
+    stack.push(neg1); // x — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -973,10 +1004,10 @@ test "opEq: 42 == 42 = 1" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 42);
-    try stack.push(allocator, 42);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(42);
+    stack.push(42);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -992,10 +1023,10 @@ test "opEq: 1 == 2 = 0" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 2);
-    try stack.push(allocator, 1);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(2);
+    stack.push(1);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -1011,9 +1042,9 @@ test "opIszero: 0 = 1" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 0);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -1029,9 +1060,9 @@ test "opIszero: 42 = 0" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 42);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(42);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -1047,10 +1078,10 @@ test "opAnd: 0xF0 & 0xFF = 0xF0" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 0xFF);
-    try stack.push(allocator, 0xF0);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0xFF);
+    stack.push(0xF0);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -1066,10 +1097,10 @@ test "opOr: 0xF0 | 0x0F = 0xFF" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 0x0F);
-    try stack.push(allocator, 0xF0);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0x0F);
+    stack.push(0xF0);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -1085,10 +1116,10 @@ test "opXor: 0xFF ^ 0xF0 = 0x0F" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 0xF0);
-    try stack.push(allocator, 0xFF);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0xF0);
+    stack.push(0xFF);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -1104,9 +1135,9 @@ test "opNot: ~0 = maxInt(u256)" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 0);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -1122,9 +1153,9 @@ test "opNot: ~maxInt(u256) = 0" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, std.math.maxInt(u256));
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(std.math.maxInt(u256));
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -1140,10 +1171,10 @@ test "opByte: byte 31 of 0x42 = 0x42" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 0x42); // val
-    try stack.push(allocator, 31);   // th — top (LSB is byte 31)
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0x42); // val
+    stack.push(31);   // th — top (LSB is byte 31)
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -1159,10 +1190,10 @@ test "opByte: th >= 32 returns 0" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 0xFF); // val
-    try stack.push(allocator, 32);   // th — out of range
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0xFF); // val
+    stack.push(32);   // th — out of range
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -1178,10 +1209,10 @@ test "opShl: 1 << 1 = 2" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 1); // val
-    try stack.push(allocator, 1); // shift — top
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(1); // val
+    stack.push(1); // shift — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -1197,10 +1228,10 @@ test "opShl: shift >= 256 returns 0" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 1);   // val
-    try stack.push(allocator, 256); // shift — out of range
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(1);   // val
+    stack.push(256); // shift — out of range
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -1216,10 +1247,10 @@ test "opShr: 4 >> 1 = 2" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 4); // val
-    try stack.push(allocator, 1); // shift — top
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(4); // val
+    stack.push(1); // shift — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -1235,10 +1266,10 @@ test "opShr: shift >= 256 returns 0" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 0xFF); // val
-    try stack.push(allocator, 256);  // shift — out of range
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0xFF); // val
+    stack.push(256);  // shift — out of range
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -1254,11 +1285,11 @@ test "opSar: -4 >> 1 = -2 (sign extending)" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
     const neg4: u256 = @bitCast(@as(i256, -4));
-    try stack.push(allocator, neg4); // val
-    try stack.push(allocator, 1);    // shift — top
+    stack.push(neg4); // val
+    stack.push(1);    // shift — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -1275,11 +1306,11 @@ test "opSar: shift >= 256 with negative value returns all-ones" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
     const neg1: u256 = @bitCast(@as(i256, -1));
-    try stack.push(allocator, neg1); // val (negative)
-    try stack.push(allocator, 256);  // shift — out of range
+    stack.push(neg1); // val (negative)
+    stack.push(256);  // shift — out of range
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -1295,10 +1326,10 @@ test "opSar: shift >= 256 with positive value returns 0" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 42);  // val (positive)
-    try stack.push(allocator, 256); // shift — out of range
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(42);  // val (positive)
+    stack.push(256); // shift — out of range
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -1314,9 +1345,9 @@ test "opClz: 0 has 256 leading zeros" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 0);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -1332,9 +1363,9 @@ test "opClz: 1 has 255 leading zeros" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, 1);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(1);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -1350,9 +1381,9 @@ test "opClz: maxInt(u256) has 0 leading zeros" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
-    try stack.push(allocator, std.math.maxInt(u256));
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(std.math.maxInt(u256));
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -1368,11 +1399,11 @@ test "opKeccak256: hash of empty data" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
     // size=0, offset=0 — no memory expansion needed
-    try stack.push(allocator, 0); // size
-    try stack.push(allocator, 0); // offset — top
+    stack.push(0); // size
+    stack.push(0); // offset — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;
@@ -1390,13 +1421,13 @@ test "opKeccak256: hash of known data" {
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
-    var stack = @import("stack.zig").Stack{};
-    defer stack.deinit(allocator);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
     const input = [_]u8{ 0xde, 0xad, 0xbe, 0xef };
     try memory.resize(input.len);
     memory.set(0, input.len, &input);
-    try stack.push(allocator, input.len); // size
-    try stack.push(allocator, 0);         // offset — top
+    stack.push(input.len); // size
+    stack.push(0);         // offset — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     const evm_placeholder: u8 = 0;

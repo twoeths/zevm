@@ -3,14 +3,31 @@ const std = @import("std");
 pub const Word = u256;
 pub const max_size: usize = 1024;
 
+/// EVM word stack, capacity fixed at the protocol maximum of 1024 entries.
+///
+/// Design: the backing buffer is caller-provided. Stack itself holds only an
+/// ArrayListUnmanaged header (slice pointer + capacity usize) — it owns no
+/// memory and needs no allocator anywhere.
+///
+/// The caller decides the buffer lifetime strategy:
+///   - Stack-allocate `[max_size]Word` for simple single-frame use.
+///   - Heap-allocate and reuse via a pool across call frames (preferred for an
+///     interpreter) — buffers grow to the high-water mark of observed call
+///     depth and are never freed, eliminating per-frame allocation entirely.
+///
+/// Why ArrayListUnmanaged + initBuffer instead of a bare array + usize index:
+///   Reuses std slice/length machinery (items, len, pop) and lets us call
+///   appendAssumeCapacity without an allocator, since capacity is pre-set.
 pub const Stack = struct {
     data: std.ArrayListUnmanaged(Word) = .{},
 
-    pub fn deinit(self: *Stack, allocator: std.mem.Allocator) void {
-        self.data.deinit(allocator);
-        self.* = .{};
+    /// Caller stack-allocates `buf` (length >= max_size) and passes it in.
+    /// Returns a Stack wired to that buffer — no heap involved.
+    pub fn init(buf: []Word) Stack {
+        return .{ .data = std.ArrayListUnmanaged(Word).initBuffer(buf) };
     }
 
+    /// no need deinit() since we own no memory
     pub fn reset(self: *Stack) void {
         self.data.clearRetainingCapacity();
     }
@@ -23,9 +40,10 @@ pub const Stack = struct {
         return self.data.items.len;
     }
 
-    pub fn push(self: *Stack, allocator: std.mem.Allocator, value: Word) !void {
+    /// Push one word. Infallible: capacity was reserved upfront by init.
+    pub fn push(self: *Stack, value: Word) void {
         std.debug.assert(self.len() < max_size);
-        try self.data.append(allocator, value);
+        self.data.appendAssumeCapacity(value);
     }
 
     pub fn pop(self: *Stack) Word {
@@ -33,9 +51,10 @@ pub const Stack = struct {
         return self.data.pop().?;
     }
 
-    pub fn dup(self: *Stack, allocator: std.mem.Allocator, n: usize) !void {
+    /// Duplicate the nth word from the top (1-indexed). Infallible.
+    pub fn dup(self: *Stack, n: usize) void {
         std.debug.assert(n >= 1 and n <= self.len());
-        try self.push(allocator, self.data.items[self.len() - n]);
+        self.push(self.data.items[self.len() - n]);
     }
 
     pub fn peek(self: *Stack) *Word {
@@ -121,13 +140,12 @@ pub const Stack = struct {
 };
 
 test "push, pop, peek, and back" {
-    const allocator = std.testing.allocator;
-    var stack = Stack{};
-    defer stack.deinit(allocator);
+    var buf: [max_size]Word = undefined;
+    var stack = Stack.init(&buf);
 
-    try stack.push(allocator, 1);
-    try stack.push(allocator, 2);
-    try stack.push(allocator, 3);
+    stack.push(1);
+    stack.push(2);
+    stack.push(3);
 
     try std.testing.expectEqual(@as(usize, 3), stack.len());
     try std.testing.expectEqual(@as(Word, 3), stack.peek().*);
@@ -137,29 +155,27 @@ test "push, pop, peek, and back" {
 }
 
 test "dup copies nth item from the top" {
-    const allocator = std.testing.allocator;
-    var stack = Stack{};
-    defer stack.deinit(allocator);
+    var buf: [max_size]Word = undefined;
+    var stack = Stack.init(&buf);
 
-    try stack.push(allocator, 10);
-    try stack.push(allocator, 20);
-    try stack.push(allocator, 30);
+    stack.push(10);
+    stack.push(20);
+    stack.push(30);
 
-    try stack.dup(allocator, 2);
+    stack.dup(2);
 
     try std.testing.expectEqual(@as(usize, 4), stack.len());
     try std.testing.expectEqual(@as(Word, 20), stack.peek().*);
 }
 
 test "swap exchanges top with nth item below it" {
-    const allocator = std.testing.allocator;
-    var stack = Stack{};
-    defer stack.deinit(allocator);
+    var buf: [max_size]Word = undefined;
+    var stack = Stack.init(&buf);
 
-    try stack.push(allocator, 1);
-    try stack.push(allocator, 2);
-    try stack.push(allocator, 3);
-    try stack.push(allocator, 4);
+    stack.push(1);
+    stack.push(2);
+    stack.push(3);
+    stack.push(4);
 
     stack.swap2();
 
