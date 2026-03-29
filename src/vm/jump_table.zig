@@ -160,17 +160,17 @@ pub const frontier: JumpTable = blk: {
     t[@intFromEnum(OpCode.EXP)]        = .{ .execute_fn = instructions.opExp, .constant_gas = gas_fast_step,    .dynamic_op = &dynamic_gas_only,       .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
     t[@intFromEnum(OpCode.SIGNEXTEND)] = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fast_step,    .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
 
-    t[@intFromEnum(OpCode.LT)]     = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
-    t[@intFromEnum(OpCode.GT)]     = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
-    t[@intFromEnum(OpCode.SLT)]    = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
-    t[@intFromEnum(OpCode.SGT)]    = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
-    t[@intFromEnum(OpCode.EQ)]     = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
-    t[@intFromEnum(OpCode.ISZERO)] = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fastest_step, .min_stack = minStack(1, 1), .max_stack = maxStack(1, 1) };
-    t[@intFromEnum(OpCode.AND)]    = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
-    t[@intFromEnum(OpCode.OR)]     = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
-    t[@intFromEnum(OpCode.XOR)]    = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
-    t[@intFromEnum(OpCode.NOT)]    = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fastest_step, .min_stack = minStack(1, 1), .max_stack = maxStack(1, 1) };
-    t[@intFromEnum(OpCode.BYTE)]   = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
+    t[@intFromEnum(OpCode.LT)]     = .{ .execute_fn = instructions.opLt,     .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
+    t[@intFromEnum(OpCode.GT)]     = .{ .execute_fn = instructions.opGt,     .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
+    t[@intFromEnum(OpCode.SLT)]    = .{ .execute_fn = instructions.opSlt,    .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
+    t[@intFromEnum(OpCode.SGT)]    = .{ .execute_fn = instructions.opSgt,    .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
+    t[@intFromEnum(OpCode.EQ)]     = .{ .execute_fn = instructions.opEq,     .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
+    t[@intFromEnum(OpCode.ISZERO)] = .{ .execute_fn = instructions.opIszero, .constant_gas = gas_fastest_step, .min_stack = minStack(1, 1), .max_stack = maxStack(1, 1) };
+    t[@intFromEnum(OpCode.AND)]    = .{ .execute_fn = instructions.opAnd,    .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
+    t[@intFromEnum(OpCode.OR)]     = .{ .execute_fn = instructions.opOr,     .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
+    t[@intFromEnum(OpCode.XOR)]    = .{ .execute_fn = instructions.opXor,    .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
+    t[@intFromEnum(OpCode.NOT)]    = .{ .execute_fn = instructions.opNot,    .constant_gas = gas_fastest_step, .min_stack = minStack(1, 1), .max_stack = maxStack(1, 1) };
+    t[@intFromEnum(OpCode.BYTE)]   = .{ .execute_fn = instructions.opByte,   .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
 
     t[@intFromEnum(OpCode.KECCAK256)] = .{ .execute_fn = opNotImplemented, .constant_gas = gas_sha3_base, .dynamic_op = &dynamic_gas_and_memory, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
 
@@ -315,9 +315,9 @@ pub const byzantium: JumpTable = blk: {
 
 pub const constantinople: JumpTable = blk: {
     var t = byzantium;
-    t.table[@intFromEnum(OpCode.SHL)]         = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
-    t.table[@intFromEnum(OpCode.SHR)]         = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
-    t.table[@intFromEnum(OpCode.SAR)]         = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
+    t.table[@intFromEnum(OpCode.SHL)]         = .{ .execute_fn = instructions.opShl, .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
+    t.table[@intFromEnum(OpCode.SHR)]         = .{ .execute_fn = instructions.opShr, .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
+    t.table[@intFromEnum(OpCode.SAR)]         = .{ .execute_fn = instructions.opSar, .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
     t.table[@intFromEnum(OpCode.EXTCODEHASH)] = .{ .execute_fn = opNotImplemented, .constant_gas = gas_ext_step,     .min_stack = minStack(1, 1), .max_stack = maxStack(1, 1) };
     t.table[@intFromEnum(OpCode.CREATE2)]     = .{
         .execute_fn   = opNotImplemented,
@@ -377,7 +377,7 @@ pub const prague: JumpTable = blk: {
 
 pub const osaka: JumpTable = blk: {
     var t = prague;
-    t.table[@intFromEnum(OpCode.CLZ)] = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fastest_step, .min_stack = minStack(1, 1), .max_stack = maxStack(1, 1) };
+    t.table[@intFromEnum(OpCode.CLZ)] = .{ .execute_fn = instructions.opClz, .constant_gas = gas_fastest_step, .min_stack = minStack(1, 1), .max_stack = maxStack(1, 1) };
     break :blk t;
 };
 
