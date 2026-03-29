@@ -1,54 +1,59 @@
 const std = @import("std");
 
 pub const OpCode = enum(u8) {
-    STOP        = 0x00,
-    ADD         = 0x01,
-    MUL         = 0x02,
-    SUB         = 0x03,
-    DIV         = 0x04,
-    SDIV        = 0x05,
-    MOD         = 0x06,
-    SMOD        = 0x07,
-    ADDMOD      = 0x08,
-    MULMOD      = 0x09,
-    EXP         = 0x0a,
-    SIGNEXTEND  = 0x0b,
+    // 0x0 range - arithmetic ops.
+    STOP       = 0x00,
+    ADD        = 0x01,
+    MUL        = 0x02,
+    SUB        = 0x03,
+    DIV        = 0x04,
+    SDIV       = 0x05,
+    MOD        = 0x06,
+    SMOD       = 0x07,
+    ADDMOD     = 0x08,
+    MULMOD     = 0x09,
+    EXP        = 0x0a,
+    SIGNEXTEND = 0x0b,
 
-    LT          = 0x10,
-    GT          = 0x11,
-    SLT         = 0x12,
-    SGT         = 0x13,
-    EQ          = 0x14,
-    ISZERO      = 0x15,
-    AND         = 0x16,
-    OR          = 0x17,
-    XOR         = 0x18,
-    NOT         = 0x19,
-    BYTE        = 0x1a,
-    SHL         = 0x1b,
-    SHR         = 0x1c,
-    SAR         = 0x1d,
-    CLZ         = 0x1e,
+    // 0x10 range - comparison & bitwise logic ops.
+    LT     = 0x10,
+    GT     = 0x11,
+    SLT    = 0x12,
+    SGT    = 0x13,
+    EQ     = 0x14,
+    ISZERO = 0x15,
+    AND    = 0x16,
+    OR     = 0x17,
+    XOR    = 0x18,
+    NOT    = 0x19,
+    BYTE   = 0x1a,
+    SHL    = 0x1b,
+    SHR    = 0x1c,
+    SAR    = 0x1d,
+    CLZ    = 0x1e,
 
-    KECCAK256   = 0x20,
+    // 0x20 range - hash ops.
+    KECCAK256 = 0x20,
 
-    ADDRESS         = 0x30,
-    BALANCE         = 0x31,
-    ORIGIN          = 0x32,
-    CALLER          = 0x33,
-    CALLVALUE       = 0x34,
-    CALLDATALOAD    = 0x35,
-    CALLDATASIZE    = 0x36,
-    CALLDATACOPY    = 0x37,
-    CODESIZE        = 0x38,
-    CODECOPY        = 0x39,
-    GASPRICE        = 0x3a,
-    EXTCODESIZE     = 0x3b,
-    EXTCODECOPY     = 0x3c,
-    RETURNDATASIZE  = 0x3d,
-    RETURNDATACOPY  = 0x3e,
-    EXTCODEHASH     = 0x3f,
+    // 0x30 range - closure state ops.
+    ADDRESS        = 0x30,
+    BALANCE        = 0x31,
+    ORIGIN         = 0x32,
+    CALLER         = 0x33,
+    CALLVALUE      = 0x34,
+    CALLDATALOAD   = 0x35,
+    CALLDATASIZE   = 0x36,
+    CALLDATACOPY   = 0x37,
+    CODESIZE       = 0x38,
+    CODECOPY       = 0x39,
+    GASPRICE       = 0x3a,
+    EXTCODESIZE    = 0x3b,
+    EXTCODECOPY    = 0x3c,
+    RETURNDATASIZE = 0x3d,
+    RETURNDATACOPY = 0x3e,
+    EXTCODEHASH    = 0x3f,
 
+    // 0x40 range - block ops.
     BLOCKHASH   = 0x40,
     COINBASE    = 0x41,
     TIMESTAMP   = 0x42,
@@ -61,6 +66,7 @@ pub const OpCode = enum(u8) {
     BLOBHASH    = 0x49,
     BLOBBASEFEE = 0x4a,
 
+    // 0x50 range - stack, memory, storage and flow ops.
     POP      = 0x50,
     MLOAD    = 0x51,
     MSTORE   = 0x52,
@@ -78,6 +84,7 @@ pub const OpCode = enum(u8) {
     MCOPY    = 0x5e,
     PUSH0    = 0x5f,
 
+    // 0x60 range - push ops.
     PUSH1  = 0x60,
     PUSH2  = 0x61,
     PUSH3  = 0x62,
@@ -111,6 +118,7 @@ pub const OpCode = enum(u8) {
     PUSH31 = 0x7e,
     PUSH32 = 0x7f,
 
+    // 0x80 range - duplication ops.
     DUP1  = 0x80,
     DUP2  = 0x81,
     DUP3  = 0x82,
@@ -128,6 +136,7 @@ pub const OpCode = enum(u8) {
     DUP15 = 0x8e,
     DUP16 = 0x8f,
 
+    // 0x90 range - exchange ops.
     SWAP1  = 0x90,
     SWAP2  = 0x91,
     SWAP3  = 0x92,
@@ -145,12 +154,14 @@ pub const OpCode = enum(u8) {
     SWAP15 = 0x9e,
     SWAP16 = 0x9f,
 
+    // 0xa0 range - logging ops.
     LOG0 = 0xa0,
     LOG1 = 0xa1,
     LOG2 = 0xa2,
     LOG3 = 0xa3,
     LOG4 = 0xa4,
 
+    // 0xf0 range - closures.
     CREATE       = 0xf0,
     CALL         = 0xf1,
     CALLCODE     = 0xf2,
@@ -162,13 +173,13 @@ pub const OpCode = enum(u8) {
     INVALID      = 0xfe,
     SELFDESTRUCT = 0xff,
 
-    _,  // non-exhaustive — remaining byte values are unnamed gaps
+    _, // non-exhaustive — remaining byte values are unnamed gaps
 };
 
 /// DIFFICULTY was renamed to PREVRANDAO in the Merge fork (EIP-4399).
 /// Both names map to opcode byte 0x44.
 pub const PREVRANDAO = OpCode.DIFFICULTY;
-pub const RANDOM     = OpCode.DIFFICULTY;
+pub const RANDOM = OpCode.DIFFICULTY;
 
 pub fn isPush(op: OpCode) bool {
     const v = @intFromEnum(op);
