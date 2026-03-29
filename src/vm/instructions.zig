@@ -292,6 +292,21 @@ pub fn opSar(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     return null;
 }
 
+// ── Hash ──────────────────────────────────────────────────────────────────────
+
+/// KECCAK256 (0x20): pop offset, peek size, size = keccak256(memory[offset..offset+size]).
+pub fn opKeccak256(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = .{ pc, evm };
+    const offset = scope.stack.pop();
+    const size   = scope.stack.peek();
+    const data   = scope.memory.getPtr(@intCast(offset), @intCast(size.*));
+    var buf: [32]u8 = undefined;
+    // TODO zevm: may want to make this generic by calling an Evm function like in go-ethereum
+    std.crypto.hash.sha3.Keccak256.hash(data, &buf, .{});
+    size.* = std.mem.readInt(u256, &buf, .big);
+    return null;
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 test "opAdd: 2 + 3 = 5" {
@@ -1343,4 +1358,52 @@ test "opClz: maxInt(u256) has 0 leading zeros" {
     const evm_placeholder: u8 = 0;
     _ = try opClz(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
     try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
+}
+
+test "opKeccak256: hash of empty data" {
+    const allocator = std.testing.allocator;
+    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
+    defer jump_dests.deinit(allocator);
+    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack = @import("stack.zig").Stack{};
+    defer stack.deinit(allocator);
+    // size=0, offset=0 — no memory expansion needed
+    try stack.push(allocator, 0); // size
+    try stack.push(allocator, 0); // offset — top
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+    const evm_placeholder: u8 = 0;
+    _ = try opKeccak256(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    // keccak256("") = 0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470
+    const expected: u256 = 0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470;
+    try std.testing.expectEqual(expected, scope.stack.peek().*);
+}
+
+test "opKeccak256: hash of known data" {
+    const allocator = std.testing.allocator;
+    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
+    defer jump_dests.deinit(allocator);
+    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack = @import("stack.zig").Stack{};
+    defer stack.deinit(allocator);
+    const input = [_]u8{ 0xde, 0xad, 0xbe, 0xef };
+    try memory.resize(input.len);
+    memory.set(0, input.len, &input);
+    try stack.push(allocator, input.len); // size
+    try stack.push(allocator, 0);         // offset — top
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+    const evm_placeholder: u8 = 0;
+    _ = try opKeccak256(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    // compute expected hash independently
+    var expected_buf: [32]u8 = undefined;
+    std.crypto.hash.sha3.Keccak256.hash(&input, &expected_buf, .{});
+    const expected = std.mem.readInt(u256, &expected_buf, .big);
+    try std.testing.expectEqual(expected, scope.stack.peek().*);
 }
