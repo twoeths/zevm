@@ -175,7 +175,7 @@ pub const frontier: JumpTable = blk: {
     t[@intFromEnum(OpCode.ADDRESS)]      = .{ .execute_fn = instructions.opAddress, .constant_gas = gas_quick_step,   .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
     t[@intFromEnum(OpCode.BALANCE)]      = .{ .execute_fn = instructions.opBalance, .constant_gas = gas_slow_step,    .min_stack = minStack(1, 1), .max_stack = maxStack(1, 1) };
     t[@intFromEnum(OpCode.ORIGIN)]       = .{ .execute_fn = instructions.opOrigin, .constant_gas = gas_quick_step,   .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
-    t[@intFromEnum(OpCode.CALLER)]       = .{ .execute_fn = opNotImplemented, .constant_gas = gas_quick_step,   .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
+    t[@intFromEnum(OpCode.CALLER)]       = .{ .execute_fn = instructions.opCaller, .constant_gas = gas_quick_step,   .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
     t[@intFromEnum(OpCode.CALLVALUE)]    = .{ .execute_fn = opNotImplemented, .constant_gas = gas_quick_step,   .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
     t[@intFromEnum(OpCode.CALLDATALOAD)] = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fastest_step, .min_stack = minStack(1, 1), .max_stack = maxStack(1, 1) };
     t[@intFromEnum(OpCode.CALLDATASIZE)] = .{ .execute_fn = opNotImplemented, .constant_gas = gas_quick_step,   .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };

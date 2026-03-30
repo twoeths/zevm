@@ -328,6 +328,15 @@ pub fn opOrigin(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     return null;
 }
 
+/// CALLER (0x33): push the immediate caller address as a u256 word.
+pub fn opCaller(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = .{ pc, evm };
+    var buf = [_]u8{0} ** 32;
+    @memcpy(buf[12..], &scope.contract.caller.bytes);
+    scope.stack.push(std.mem.readInt(u256, &buf, .big));
+    return null;
+}
+
 // ── Hash ──────────────────────────────────────────────────────────────────────
 
 /// KECCAK256 (0x20): pop offset, peek size, size = keccak256(memory[offset..offset+size]).
@@ -414,6 +423,26 @@ test "opOrigin: pushes transaction origin as u256" {
 
     _ = try opOrigin(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(Word, 0x00112233445566778899aabbccddeeff00112233), scope.stack.peek().*);
+}
+
+test "opCaller: pushes immediate caller as u256" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    contract.caller = try common.hexToAddress("0xaabbccddeeff0011223344556677889900112233");
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opCaller(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(Word, 0xaabbccddeeff0011223344556677889900112233), scope.stack.peek().*);
 }
 
 test "opAdd: 2 + 3 = 5" {
