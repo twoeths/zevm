@@ -360,6 +360,13 @@ pub fn opCallDataLoad(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8
     return null;
 }
 
+/// CALLDATASIZE (0x36): push the size of the current call input in bytes.
+pub fn opCallDataSize(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = .{ pc, evm };
+    scope.stack.push(scope.contract.input.len);
+    return null;
+}
+
 // ── Hash ──────────────────────────────────────────────────────────────────────
 
 /// KECCAK256 (0x20): pop offset, peek size, size = keccak256(memory[offset..offset+size]).
@@ -508,6 +515,26 @@ test "opCallDataLoad: returns zero for out-of-range offset" {
 
     _ = try opCallDataLoad(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(Word, 0), scope.stack.peek().*);
+}
+
+test "opCallDataSize: pushes calldata length" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    contract.input = "hello";
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opCallDataSize(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(Word, 5), scope.stack.peek().*);
 }
 
 test "opAdd: 2 + 3 = 5" {
