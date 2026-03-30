@@ -5,11 +5,16 @@ const JumpDestCache = @import("jump_dest_cache.zig").JumpDestCache;
 const StateDB = @import("state_db.zig").StateDB;
 const jump_table = @import("jump_table.zig");
 
+pub const TxContext = struct {
+    origin: common.Address = .{},
+};
+
 pub const Evm = struct {
     allocator: std.mem.Allocator,
     state_db: *StateDB,
     jump_table: *const jump_table.JumpTable,
     jump_dests: JumpDestCache,
+    tx_context: TxContext = .{},
 
     pub fn init(allocator: std.mem.Allocator, state_db: *StateDB, fork: jump_table.Fork) Evm {
         return .{
@@ -27,5 +32,9 @@ pub const Evm = struct {
 
     pub fn getBalance(self: *const Evm, address: common.Address) Word {
         return self.state_db.getBalance(address);
+    }
+
+    pub fn setTxContext(self: *Evm, tx_context: TxContext) void {
+        self.tx_context = tx_context;
     }
 };

@@ -319,6 +319,15 @@ pub fn opBalance(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     return null;
 }
 
+/// ORIGIN (0x32): push the transaction origin address as a u256 word.
+pub fn opOrigin(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = pc;
+    var buf = [_]u8{0} ** 32;
+    @memcpy(buf[12..], &evm.tx_context.origin.bytes);
+    scope.stack.push(std.mem.readInt(u256, &buf, .big));
+    return null;
+}
+
 // ── Hash ──────────────────────────────────────────────────────────────────────
 
 /// KECCAK256 (0x20): pop offset, peek size, size = keccak256(memory[offset..offset+size]).
@@ -383,6 +392,28 @@ test "opBalance: replaces address with account balance" {
     var pc: u64 = 0;
     _ = try opBalance(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(Word, 0x123456789abcdef0), scope.stack.peek().*);
+}
+
+test "opOrigin: pushes transaction origin as u256" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    evm.setTxContext(.{
+        .origin = try common.hexToAddress("0x00112233445566778899aabbccddeeff00112233"),
+    });
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opOrigin(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(Word, 0x00112233445566778899aabbccddeeff00112233), scope.stack.peek().*);
 }
 
 test "opAdd: 2 + 3 = 5" {
