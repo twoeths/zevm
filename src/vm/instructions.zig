@@ -1,6 +1,10 @@
 const std          = @import("std");
-const Evm          = @import("jump_table.zig").Evm;
+const common       = @import("common");
+const Evm          = @import("evm.zig").Evm;
+const Fork         = @import("jump_table.zig").Fork;
 const ScopeContext = @import("interpreter.zig").ScopeContext;
+const StateDB      = @import("state_db.zig").StateDB;
+const Word         = @import("stack.zig").Word;
 
 /// Typed error set for opcode execution functions.
 /// Extended as new opcodes are implemented.
@@ -304,6 +308,17 @@ pub fn opAddress(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     return null;
 }
 
+/// BALANCE (0x31): replace the top stack item address with that account's balance.
+pub fn opBalance(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = pc;
+    const slot = scope.stack.peek();
+    var buf = [_]u8{0} ** 32;
+    std.mem.writeInt(u256, &buf, slot.*, .big);
+    const address = common.bytesToAddress(buf[12..]);
+    slot.* = evm.getBalance(address);
+    return null;
+}
+
 // ── Hash ──────────────────────────────────────────────────────────────────────
 
 /// KECCAK256 (0x20): pop offset, peek size, size = keccak256(memory[offset..offset+size]).
@@ -321,11 +336,17 @@ pub fn opKeccak256(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
+fn initTestEvm(allocator: std.mem.Allocator, state_db: *StateDB, fork: Fork) Evm {
+    return Evm.init(allocator, state_db, fork);
+}
+
 test "opAddress: pushes contract address as u256" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     contract.address = .{ .bytes = [_]u8{0} ** 12 ++ [_]u8{ 0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xba, 0xbe } };
     var memory = @import("memory.zig").Memory.init(allocator);
@@ -334,17 +355,43 @@ test "opAddress: pushes contract address as u256" {
     var stack = @import("stack.zig").Stack.init(&stack_buf);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opAddress(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opAddress(&pc, &evm, &scope);
     const expected: u256 = 0xdeadbeefcafebabe;
     try std.testing.expectEqual(expected, scope.stack.peek().*);
 }
 
+test "opBalance: replaces address with account balance" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+
+    const address = try common.hexToAddress("0x00112233445566778899aabbccddeeff00112233");
+    try state_db.setBalance(allocator, address, 0x123456789abcdef0);
+    var address_buf = [_]u8{0} ** 32;
+    @memcpy(address_buf[12..], &address.bytes);
+    stack.push(std.mem.readInt(u256, &address_buf, .big));
+
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+    _ = try opBalance(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(Word, 0x123456789abcdef0), scope.stack.peek().*);
+}
+
 test "opAdd: 2 + 3 = 5" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -354,16 +401,17 @@ test "opAdd: 2 + 3 = 5" {
     stack.push(3);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opAdd(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opAdd(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 5), scope.stack.peek().*);
 }
 
 test "opAdd: wraps at 2^256" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -373,16 +421,17 @@ test "opAdd: wraps at 2^256" {
     stack.push(1);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opAdd(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opAdd(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
 }
 
 test "opSub: 10 - 3 = 7" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -392,16 +441,17 @@ test "opSub: 10 - 3 = 7" {
     stack.push(10);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opSub(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opSub(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 7), scope.stack.peek().*);
 }
 
 test "opSub: wraps at 2^256" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -411,16 +461,17 @@ test "opSub: wraps at 2^256" {
     stack.push(0);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opSub(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opSub(&pc, &evm, &scope);
     try std.testing.expectEqual(std.math.maxInt(u256), scope.stack.peek().*);
 }
 
 test "opMul: 6 * 7 = 42" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -430,16 +481,17 @@ test "opMul: 6 * 7 = 42" {
     stack.push(6);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opMul(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opMul(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 42), scope.stack.peek().*);
 }
 
 test "opMul: wraps at 2^256" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -449,17 +501,18 @@ test "opMul: wraps at 2^256" {
     stack.push(std.math.maxInt(u256));
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opMul(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opMul(&pc, &evm, &scope);
     // maxInt(u256) * 2 = 2^257 - 2 ≡ 2^256 - 2 (mod 2^256)
     try std.testing.expectEqual(std.math.maxInt(u256) - 1, scope.stack.peek().*);
 }
 
 test "opDiv: 10 / 3 = 3" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -469,16 +522,17 @@ test "opDiv: 10 / 3 = 3" {
     stack.push(10);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opDiv(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opDiv(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 3), scope.stack.peek().*);
 }
 
 test "opDiv: divide by zero returns 0" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -488,16 +542,17 @@ test "opDiv: divide by zero returns 0" {
     stack.push(42);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opDiv(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opDiv(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
 }
 
 test "opSdiv: -10 / 3 = -3" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -508,17 +563,18 @@ test "opSdiv: -10 / 3 = -3" {
     stack.push(neg10);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opSdiv(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opSdiv(&pc, &evm, &scope);
     const result: i256 = @bitCast(scope.stack.peek().*);
     try std.testing.expectEqual(@as(i256, -3), result);
 }
 
 test "opSdiv: divide by zero returns 0" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -528,16 +584,17 @@ test "opSdiv: divide by zero returns 0" {
     stack.push(42);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opSdiv(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opSdiv(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
 }
 
 test "opSdiv: INT256_MIN / -1 returns INT256_MIN" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -549,16 +606,17 @@ test "opSdiv: INT256_MIN / -1 returns INT256_MIN" {
     stack.push(int256_min);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opSdiv(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opSdiv(&pc, &evm, &scope);
     try std.testing.expectEqual(int256_min, scope.stack.peek().*);
 }
 
 test "opMod: 10 % 3 = 1" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -568,16 +626,17 @@ test "opMod: 10 % 3 = 1" {
     stack.push(10);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opMod(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opMod(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 1), scope.stack.peek().*);
 }
 
 test "opMod: modulo by zero returns 0" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -587,16 +646,17 @@ test "opMod: modulo by zero returns 0" {
     stack.push(42);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opMod(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opMod(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
 }
 
 test "opSmod: -10 % 3 = -1" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -607,17 +667,18 @@ test "opSmod: -10 % 3 = -1" {
     stack.push(neg10);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opSmod(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opSmod(&pc, &evm, &scope);
     const result: i256 = @bitCast(scope.stack.peek().*);
     try std.testing.expectEqual(@as(i256, -1), result);
 }
 
 test "opSmod: modulo by zero returns 0" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -627,16 +688,17 @@ test "opSmod: modulo by zero returns 0" {
     stack.push(42);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opSmod(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opSmod(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
 }
 
 test "opAddmod: (2 + 3) % 4 = 1" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -647,16 +709,17 @@ test "opAddmod: (2 + 3) % 4 = 1" {
     stack.push(2); // x — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opAddmod(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opAddmod(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 1), scope.stack.peek().*);
 }
 
 test "opAddmod: overflow sum (maxInt + 1) % 2 = 0" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -667,16 +730,17 @@ test "opAddmod: overflow sum (maxInt + 1) % 2 = 0" {
     stack.push(std.math.maxInt(u256)); // x
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opAddmod(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opAddmod(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
 }
 
 test "opAddmod: modulus zero returns 0" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -687,16 +751,17 @@ test "opAddmod: modulus zero returns 0" {
     stack.push(2);  // x
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opAddmod(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opAddmod(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
 }
 
 test "opMulmod: (3 * 5) % 7 = 1" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -707,16 +772,17 @@ test "opMulmod: (3 * 5) % 7 = 1" {
     stack.push(3); // x — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opMulmod(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opMulmod(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 1), scope.stack.peek().*);
 }
 
 test "opMulmod: overflow product (2^128 * 2^128) % 3 = 1" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -730,16 +796,17 @@ test "opMulmod: overflow product (2^128 * 2^128) % 3 = 1" {
     stack.push(two_pow_128);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opMulmod(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opMulmod(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 1), scope.stack.peek().*);
 }
 
 test "opMulmod: modulus zero returns 0" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -750,16 +817,17 @@ test "opMulmod: modulus zero returns 0" {
     stack.push(3); // x
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opMulmod(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opMulmod(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
 }
 
 test "opExp: 2 ** 10 = 1024" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -769,16 +837,17 @@ test "opExp: 2 ** 10 = 1024" {
     stack.push(2);  // base — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opExp(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opExp(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 1024), scope.stack.peek().*);
 }
 
 test "opExp: x ** 0 = 1" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -788,16 +857,17 @@ test "opExp: x ** 0 = 1" {
     stack.push(42); // base
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opExp(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opExp(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 1), scope.stack.peek().*);
 }
 
 test "opExp: 2 ** 256 wraps to 0" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -807,18 +877,17 @@ test "opExp: 2 ** 256 wraps to 0" {
     stack.push(2);   // base
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opExp(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opExp(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
 }
 
 test "opStop returns StopToken" {
     const allocator = std.testing.allocator;
-
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
 
     var memory = @import("memory.zig").Memory.init(allocator);
@@ -835,16 +904,17 @@ test "opStop returns StopToken" {
 
     var pc: u64 = 0;
     // opStop ignores all arguments; any non-null evm pointer satisfies the type
-    const evm_placeholder: u8 = 0;
-    const result = opStop(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    const result = opStop(&pc, &evm, &scope);
     try std.testing.expectError(error.StopToken, result);
 }
 
 test "opLt: 3 < 5 = 1" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -854,16 +924,17 @@ test "opLt: 3 < 5 = 1" {
     stack.push(3); // x — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opLt(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opLt(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 1), scope.stack.peek().*);
 }
 
 test "opLt: 5 < 3 = 0" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -873,16 +944,17 @@ test "opLt: 5 < 3 = 0" {
     stack.push(5); // x — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opLt(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opLt(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
 }
 
 test "opGt: 5 > 3 = 1" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -892,16 +964,17 @@ test "opGt: 5 > 3 = 1" {
     stack.push(5); // x — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opGt(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opGt(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 1), scope.stack.peek().*);
 }
 
 test "opGt: 3 > 5 = 0" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -911,16 +984,17 @@ test "opGt: 3 > 5 = 0" {
     stack.push(3); // x — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opGt(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opGt(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
 }
 
 test "opSlt: -1 < 1 = 1" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -931,16 +1005,17 @@ test "opSlt: -1 < 1 = 1" {
     stack.push(neg1); // x — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opSlt(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opSlt(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 1), scope.stack.peek().*);
 }
 
 test "opSlt: 1 < -1 = 0" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -951,16 +1026,17 @@ test "opSlt: 1 < -1 = 0" {
     stack.push(1);    // x — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opSlt(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opSlt(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
 }
 
 test "opSgt: 1 > -1 = 1" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -971,16 +1047,17 @@ test "opSgt: 1 > -1 = 1" {
     stack.push(1);    // x — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opSgt(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opSgt(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 1), scope.stack.peek().*);
 }
 
 test "opSgt: -1 > 1 = 0" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -991,16 +1068,17 @@ test "opSgt: -1 > 1 = 0" {
     stack.push(neg1); // x — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opSgt(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opSgt(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
 }
 
 test "opEq: 42 == 42 = 1" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -1010,16 +1088,17 @@ test "opEq: 42 == 42 = 1" {
     stack.push(42);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opEq(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opEq(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 1), scope.stack.peek().*);
 }
 
 test "opEq: 1 == 2 = 0" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -1029,16 +1108,17 @@ test "opEq: 1 == 2 = 0" {
     stack.push(1);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opEq(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opEq(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
 }
 
 test "opIszero: 0 = 1" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -1047,16 +1127,17 @@ test "opIszero: 0 = 1" {
     stack.push(0);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opIszero(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opIszero(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 1), scope.stack.peek().*);
 }
 
 test "opIszero: 42 = 0" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -1065,16 +1146,17 @@ test "opIszero: 42 = 0" {
     stack.push(42);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opIszero(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opIszero(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
 }
 
 test "opAnd: 0xF0 & 0xFF = 0xF0" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -1084,16 +1166,17 @@ test "opAnd: 0xF0 & 0xFF = 0xF0" {
     stack.push(0xF0);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opAnd(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opAnd(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 0xF0), scope.stack.peek().*);
 }
 
 test "opOr: 0xF0 | 0x0F = 0xFF" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -1103,16 +1186,17 @@ test "opOr: 0xF0 | 0x0F = 0xFF" {
     stack.push(0xF0);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opOr(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opOr(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 0xFF), scope.stack.peek().*);
 }
 
 test "opXor: 0xFF ^ 0xF0 = 0x0F" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -1122,16 +1206,17 @@ test "opXor: 0xFF ^ 0xF0 = 0x0F" {
     stack.push(0xFF);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opXor(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opXor(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 0x0F), scope.stack.peek().*);
 }
 
 test "opNot: ~0 = maxInt(u256)" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -1140,16 +1225,17 @@ test "opNot: ~0 = maxInt(u256)" {
     stack.push(0);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opNot(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opNot(&pc, &evm, &scope);
     try std.testing.expectEqual(std.math.maxInt(u256), scope.stack.peek().*);
 }
 
 test "opNot: ~maxInt(u256) = 0" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -1158,16 +1244,17 @@ test "opNot: ~maxInt(u256) = 0" {
     stack.push(std.math.maxInt(u256));
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opNot(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opNot(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
 }
 
 test "opByte: byte 31 of 0x42 = 0x42" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -1177,16 +1264,17 @@ test "opByte: byte 31 of 0x42 = 0x42" {
     stack.push(31);   // th — top (LSB is byte 31)
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opByte(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opByte(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 0x42), scope.stack.peek().*);
 }
 
 test "opByte: th >= 32 returns 0" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -1196,16 +1284,17 @@ test "opByte: th >= 32 returns 0" {
     stack.push(32);   // th — out of range
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opByte(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opByte(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
 }
 
 test "opShl: 1 << 1 = 2" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -1215,16 +1304,17 @@ test "opShl: 1 << 1 = 2" {
     stack.push(1); // shift — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opShl(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opShl(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 2), scope.stack.peek().*);
 }
 
 test "opShl: shift >= 256 returns 0" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -1234,16 +1324,17 @@ test "opShl: shift >= 256 returns 0" {
     stack.push(256); // shift — out of range
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opShl(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opShl(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
 }
 
 test "opShr: 4 >> 1 = 2" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -1253,16 +1344,17 @@ test "opShr: 4 >> 1 = 2" {
     stack.push(1); // shift — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opShr(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opShr(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 2), scope.stack.peek().*);
 }
 
 test "opShr: shift >= 256 returns 0" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -1272,16 +1364,17 @@ test "opShr: shift >= 256 returns 0" {
     stack.push(256);  // shift — out of range
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opShr(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opShr(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
 }
 
 test "opSar: -4 >> 1 = -2 (sign extending)" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -1292,17 +1385,18 @@ test "opSar: -4 >> 1 = -2 (sign extending)" {
     stack.push(1);    // shift — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opSar(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opSar(&pc, &evm, &scope);
     const result: i256 = @bitCast(scope.stack.peek().*);
     try std.testing.expectEqual(@as(i256, -2), result);
 }
 
 test "opSar: shift >= 256 with negative value returns all-ones" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -1313,16 +1407,17 @@ test "opSar: shift >= 256 with negative value returns all-ones" {
     stack.push(256);  // shift — out of range
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opSar(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opSar(&pc, &evm, &scope);
     try std.testing.expectEqual(std.math.maxInt(u256), scope.stack.peek().*);
 }
 
 test "opSar: shift >= 256 with positive value returns 0" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -1332,16 +1427,17 @@ test "opSar: shift >= 256 with positive value returns 0" {
     stack.push(256); // shift — out of range
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opSar(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opSar(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
 }
 
 test "opClz: 0 has 256 leading zeros" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -1350,16 +1446,17 @@ test "opClz: 0 has 256 leading zeros" {
     stack.push(0);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opClz(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opClz(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 256), scope.stack.peek().*);
 }
 
 test "opClz: 1 has 255 leading zeros" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -1368,16 +1465,17 @@ test "opClz: 1 has 255 leading zeros" {
     stack.push(1);
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opClz(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opClz(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 255), scope.stack.peek().*);
 }
 
 test "opClz: maxInt(u256) has 0 leading zeros" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -1386,16 +1484,17 @@ test "opClz: maxInt(u256) has 0 leading zeros" {
     stack.push(std.math.maxInt(u256));
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opClz(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opClz(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(u256, 0), scope.stack.peek().*);
 }
 
 test "opKeccak256: hash of empty data" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -1406,8 +1505,7 @@ test "opKeccak256: hash of empty data" {
     stack.push(0); // offset — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opKeccak256(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opKeccak256(&pc, &evm, &scope);
     // keccak256("") = 0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470
     const expected: u256 = 0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470;
     try std.testing.expectEqual(expected, scope.stack.peek().*);
@@ -1415,9 +1513,11 @@ test "opKeccak256: hash of empty data" {
 
 test "opKeccak256: hash of known data" {
     const allocator = std.testing.allocator;
-    var jump_dests = @import("jump_dest_cache.zig").JumpDestCache.init();
-    defer jump_dests.deinit(allocator);
-    var contract = @import("contract.zig").Contract.init(allocator, &jump_dests);
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
     defer contract.deinit();
     var memory = @import("memory.zig").Memory.init(allocator);
     defer memory.deinit();
@@ -1430,8 +1530,7 @@ test "opKeccak256: hash of known data" {
     stack.push(0);         // offset — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
-    const evm_placeholder: u8 = 0;
-    _ = try opKeccak256(&pc, @constCast(@ptrCast(&evm_placeholder)), &scope);
+    _ = try opKeccak256(&pc, &evm, &scope);
     // compute expected hash independently
     var expected_buf: [32]u8 = undefined;
     std.crypto.hash.sha3.Keccak256.hash(&input, &expected_buf, .{});

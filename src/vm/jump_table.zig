@@ -4,11 +4,9 @@ const stack_mod = @import("stack.zig");
 const Stack     = stack_mod.Stack;
 const Memory    = @import("memory.zig").Memory;
 const Contract  = @import("contract.zig").Contract;
+const Evm       = @import("evm.zig").Evm;
 const ScopeContext = @import("interpreter.zig").ScopeContext;
 const instructions = @import("instructions.zig");
-
-/// Forward-declared opaque for the EVM context; replaced with a concrete type once evm.zig exists.
-pub const Evm = anyopaque;
 
 const ExecError = instructions.ExecError;
 
@@ -175,7 +173,7 @@ pub const frontier: JumpTable = blk: {
     t[@intFromEnum(OpCode.KECCAK256)] = .{ .execute_fn = instructions.opKeccak256, .constant_gas = gas_sha3_base, .dynamic_op = &dynamic_gas_and_memory, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
 
     t[@intFromEnum(OpCode.ADDRESS)]      = .{ .execute_fn = instructions.opAddress, .constant_gas = gas_quick_step,   .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
-    t[@intFromEnum(OpCode.BALANCE)]      = .{ .execute_fn = opNotImplemented, .constant_gas = gas_slow_step,    .min_stack = minStack(1, 1), .max_stack = maxStack(1, 1) };
+    t[@intFromEnum(OpCode.BALANCE)]      = .{ .execute_fn = instructions.opBalance, .constant_gas = gas_slow_step,    .min_stack = minStack(1, 1), .max_stack = maxStack(1, 1) };
     t[@intFromEnum(OpCode.ORIGIN)]       = .{ .execute_fn = opNotImplemented, .constant_gas = gas_quick_step,   .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
     t[@intFromEnum(OpCode.CALLER)]       = .{ .execute_fn = opNotImplemented, .constant_gas = gas_quick_step,   .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
     t[@intFromEnum(OpCode.CALLVALUE)]    = .{ .execute_fn = opNotImplemented, .constant_gas = gas_quick_step,   .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
