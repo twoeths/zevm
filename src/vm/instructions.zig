@@ -367,6 +367,33 @@ pub fn opCallDataSize(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8
     return null;
 }
 
+/// CALLDATACOPY (0x37): copy calldata bytes into memory, zero-filling any missing tail.
+pub fn opCallDataCopy(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = .{ pc, evm };
+    const mem_offset = scope.stack.pop();
+    const data_offset = scope.stack.pop();
+    const length = scope.stack.pop();
+
+    const mem_offset_usize: usize = @intCast(mem_offset);
+    const length_usize: usize = @intCast(length);
+    const dst = scope.memory.getPtr(mem_offset_usize, length_usize);
+    @memset(dst, 0);
+
+    if (data_offset > std.math.maxInt(usize) or length_usize == 0) {
+        return null;
+    }
+
+    const data_offset_usize: usize = @intCast(data_offset);
+    const input = scope.contract.input;
+    if (data_offset_usize >= input.len) {
+        return null;
+    }
+
+    const available = @min(length_usize, input.len - data_offset_usize);
+    @memcpy(dst[0..available], input[data_offset_usize .. data_offset_usize + available]);
+    return null;
+}
+
 // ── Hash ──────────────────────────────────────────────────────────────────────
 
 /// KECCAK256 (0x20): pop offset, peek size, size = keccak256(memory[offset..offset+size]).
@@ -535,6 +562,54 @@ test "opCallDataSize: pushes calldata length" {
 
     _ = try opCallDataSize(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(Word, 5), scope.stack.peek().*);
+}
+
+test "opCallDataCopy: copies calldata into memory and zero-fills the tail" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    contract.input = &[_]u8{ 0xde, 0xad, 0xbe, 0xef };
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    try memory.resize(8);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(6); // length
+    stack.push(1); // data offset
+    stack.push(0); // mem offset (top)
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opCallDataCopy(&pc, &evm, &scope);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0xad, 0xbe, 0xef, 0x00, 0x00, 0x00 }, memory.getPtr(0, 6));
+}
+
+test "opCallDataCopy: out-of-range data offset writes zero bytes" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    contract.input = &[_]u8{ 0xde, 0xad, 0xbe, 0xef };
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    try memory.resize(4);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(4); // length
+    stack.push(99); // data offset
+    stack.push(0); // mem offset (top)
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opCallDataCopy(&pc, &evm, &scope);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x00, 0x00, 0x00, 0x00 }, memory.getPtr(0, 4));
 }
 
 test "opAdd: 2 + 3 = 5" {
