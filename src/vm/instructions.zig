@@ -394,6 +394,13 @@ pub fn opCallDataCopy(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8
     return null;
 }
 
+/// CODESIZE (0x38): push the length of the current contract bytecode.
+pub fn opCodeSize(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = .{ pc, evm };
+    scope.stack.push(scope.contract.code.len);
+    return null;
+}
+
 // ── Hash ──────────────────────────────────────────────────────────────────────
 
 /// KECCAK256 (0x20): pop offset, peek size, size = keccak256(memory[offset..offset+size]).
@@ -610,6 +617,26 @@ test "opCallDataCopy: out-of-range data offset writes zero bytes" {
 
     _ = try opCallDataCopy(&pc, &evm, &scope);
     try std.testing.expectEqualSlices(u8, &[_]u8{ 0x00, 0x00, 0x00, 0x00 }, memory.getPtr(0, 4));
+}
+
+test "opCodeSize: pushes current contract code length" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    contract.code = &[_]u8{ 0x60, 0xaa, 0x5b, 0x00 };
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opCodeSize(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(Word, 4), scope.stack.peek().*);
 }
 
 test "opAdd: 2 + 3 = 5" {
