@@ -36,6 +36,10 @@ pub const Evm = struct {
         return self.state_db.getBalance(address);
     }
 
+    pub fn getCodeSize(self: *const Evm, address: common.Address) usize {
+        return self.state_db.getCodeSize(address);
+    }
+
     pub fn setTxContext(self: *Evm, tx_context: TxContext) void {
         self.tx_context = tx_context;
     }

@@ -394,7 +394,8 @@ pub fn opCallDataCopy(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8
     return null;
 }
 
-/// CODESIZE (0x38): push the length of the current contract bytecode.
+/// CODESIZE (0x38): push the length of the currently executing contract bytecode.
+/// Unlike EXTCODESIZE, this does not read an address from the stack or query state.
 pub fn opCodeSize(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     _ = .{ pc, evm };
     scope.stack.push(scope.contract.code.len);
@@ -432,6 +433,18 @@ pub fn opCodeCopy(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
 pub fn opGasprice(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     _ = pc;
     scope.stack.push(evm.tx_context.gas_price);
+    return null;
+}
+
+/// EXTCODESIZE (0x3b): replace the top stack item address with that account's code length.
+/// Unlike CODESIZE, this queries state for an arbitrary external address from the stack.
+pub fn opExtCodeSize(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = pc;
+    const slot = scope.stack.peek();
+    var buf = [_]u8{0} ** 32;
+    std.mem.writeInt(u256, &buf, slot.*, .big);
+    const address = common.bytesToAddress(buf[12..]);
+    slot.* = evm.getCodeSize(address);
     return null;
 }
 
@@ -742,6 +755,30 @@ test "opGasprice: pushes transaction gas price" {
 
     _ = try opGasprice(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(Word, 12345), scope.stack.peek().*);
+}
+
+test "opExtCodeSize: replaces address with account code size" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    const address = try common.hexToAddress("0x00112233445566778899aabbccddeeff00112233");
+    try state_db.setCode(allocator, address, &[_]u8{ 0x60, 0xaa, 0x5b, 0x00 });
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    var address_buf = [_]u8{0} ** 32;
+    @memcpy(address_buf[12..], &address.bytes);
+    stack.push(std.mem.readInt(u256, &address_buf, .big));
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opExtCodeSize(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(Word, 4), scope.stack.peek().*);
 }
 
 test "opAdd: 2 + 3 = 5" {
