@@ -1,12 +1,14 @@
 const std = @import("std");
 const common = @import("common");
-const Word = @import("stack.zig").Word;
 const JumpDestCache = @import("jump_dest_cache.zig").JumpDestCache;
 const StateDB = @import("state_db.zig").StateDB;
 const jump_table = @import("jump_table.zig");
 
 pub const TxContext = struct {
+    // The externally-owned account that originated the transaction.
     origin: common.Address = .{},
+    // The per-unit gas price paid by the transaction.
+    gas_price: u256 = 0,
 };
 
 pub const Evm = struct {
@@ -30,7 +32,7 @@ pub const Evm = struct {
         self.* = undefined;
     }
 
-    pub fn getBalance(self: *const Evm, address: common.Address) Word {
+    pub fn getBalance(self: *const Evm, address: common.Address) @import("stack.zig").Word {
         return self.state_db.getBalance(address);
     }
 

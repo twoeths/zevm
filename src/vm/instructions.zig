@@ -428,6 +428,13 @@ pub fn opCodeCopy(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     return null;
 }
 
+/// GASPRICE (0x3a): push the transaction gas price.
+pub fn opGasprice(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = pc;
+    scope.stack.push(evm.tx_context.gas_price);
+    return null;
+}
+
 // ── Hash ──────────────────────────────────────────────────────────────────────
 
 /// KECCAK256 (0x20): pop offset, peek size, size = keccak256(memory[offset..offset+size]).
@@ -712,6 +719,29 @@ test "opCodeCopy: out-of-range code offset writes zero bytes" {
 
     _ = try opCodeCopy(&pc, &evm, &scope);
     try std.testing.expectEqualSlices(u8, &[_]u8{ 0x00, 0x00, 0x00, 0x00 }, memory.getPtr(0, 4));
+}
+
+test "opGasprice: pushes transaction gas price" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    evm.setTxContext(.{
+        .origin = .{},
+        .gas_price = 12345,
+    });
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opGasprice(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(Word, 12345), scope.stack.peek().*);
 }
 
 test "opAdd: 2 + 3 = 5" {
