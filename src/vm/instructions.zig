@@ -448,6 +448,39 @@ pub fn opExtCodeSize(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 
     return null;
 }
 
+/// EXTCODECOPY (0x3c): copy code from an address in state into memory, zero-filling any missing tail.
+/// Unlike CODECOPY, this reads code for an arbitrary external address from the stack via state.
+pub fn opExtCodeCopy(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = pc;
+    const address_word = scope.stack.pop();
+    const mem_offset = scope.stack.pop();
+    const code_offset = scope.stack.pop();
+    const length = scope.stack.pop();
+
+    var address_buf = [_]u8{0} ** 32;
+    std.mem.writeInt(u256, &address_buf, address_word, .big);
+    const address = common.bytesToAddress(address_buf[12..]);
+
+    const mem_offset_usize: usize = @intCast(mem_offset);
+    const length_usize: usize = @intCast(length);
+    const dst = scope.memory.getPtr(mem_offset_usize, length_usize);
+    @memset(dst, 0);
+
+    if (code_offset > std.math.maxInt(usize) or length_usize == 0) {
+        return null;
+    }
+
+    const code_offset_usize: usize = @intCast(code_offset);
+    const code = evm.getCode(address);
+    if (code_offset_usize >= code.len) {
+        return null;
+    }
+
+    const available = @min(length_usize, code.len - code_offset_usize);
+    @memcpy(dst[0..available], code[code_offset_usize .. code_offset_usize + available]);
+    return null;
+}
+
 // ── Hash ──────────────────────────────────────────────────────────────────────
 
 /// KECCAK256 (0x20): pop offset, peek size, size = keccak256(memory[offset..offset+size]).
@@ -779,6 +812,62 @@ test "opExtCodeSize: replaces address with account code size" {
 
     _ = try opExtCodeSize(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(Word, 4), scope.stack.peek().*);
+}
+
+test "opExtCodeCopy: copies external code into memory and zero-fills the tail" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    const address = try common.hexToAddress("0x00112233445566778899aabbccddeeff00112233");
+    try state_db.setCode(allocator, address, &[_]u8{ 0x60, 0xaa, 0x5b, 0x00 });
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    try memory.resize(8);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    var address_buf = [_]u8{0} ** 32;
+    @memcpy(address_buf[12..], &address.bytes);
+    stack.push(6); // length
+    stack.push(1); // code offset
+    stack.push(0); // mem offset
+    stack.push(std.mem.readInt(u256, &address_buf, .big)); // address (top)
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opExtCodeCopy(&pc, &evm, &scope);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0xaa, 0x5b, 0x00, 0x00, 0x00, 0x00 }, memory.getPtr(0, 6));
+}
+
+test "opExtCodeCopy: out-of-range offset writes zero bytes" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    const address = try common.hexToAddress("0x00112233445566778899aabbccddeeff00112233");
+    try state_db.setCode(allocator, address, &[_]u8{ 0x60, 0xaa, 0x5b, 0x00 });
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    try memory.resize(4);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    var address_buf = [_]u8{0} ** 32;
+    @memcpy(address_buf[12..], &address.bytes);
+    stack.push(4); // length
+    stack.push(99); // code offset
+    stack.push(0); // mem offset
+    stack.push(std.mem.readInt(u256, &address_buf, .big)); // address (top)
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opExtCodeCopy(&pc, &evm, &scope);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x00, 0x00, 0x00, 0x00 }, memory.getPtr(0, 4));
 }
 
 test "opAdd: 2 + 3 = 5" {

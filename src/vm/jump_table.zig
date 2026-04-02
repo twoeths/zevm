@@ -184,7 +184,7 @@ pub const frontier: JumpTable = blk: {
     t[@intFromEnum(OpCode.CODECOPY)]     = .{ .execute_fn = instructions.opCodeCopy, .constant_gas = gas_fast_step,    .dynamic_op = &dynamic_gas_and_memory, .min_stack = minStack(3, 0), .max_stack = maxStack(3, 0) };
     t[@intFromEnum(OpCode.GASPRICE)]     = .{ .execute_fn = instructions.opGasprice, .constant_gas = gas_quick_step,   .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
     t[@intFromEnum(OpCode.EXTCODESIZE)]  = .{ .execute_fn = instructions.opExtCodeSize, .constant_gas = gas_slow_step,    .min_stack = minStack(1, 1), .max_stack = maxStack(1, 1) };
-    t[@intFromEnum(OpCode.EXTCODECOPY)]  = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fast_step,    .dynamic_op = &dynamic_gas_and_memory, .min_stack = minStack(4, 0), .max_stack = maxStack(4, 0) };
+    t[@intFromEnum(OpCode.EXTCODECOPY)]  = .{ .execute_fn = instructions.opExtCodeCopy, .constant_gas = gas_fast_step,    .dynamic_op = &dynamic_gas_and_memory, .min_stack = minStack(4, 0), .max_stack = maxStack(4, 0) };
 
     t[@intFromEnum(OpCode.BLOCKHASH)]  = .{ .execute_fn = opNotImplemented, .constant_gas = gas_ext_step,   .min_stack = minStack(1, 1), .max_stack = maxStack(1, 1) };
     t[@intFromEnum(OpCode.COINBASE)]   = .{ .execute_fn = opNotImplemented, .constant_gas = gas_quick_step, .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };

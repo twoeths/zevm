@@ -35,6 +35,10 @@ pub const StateDB = struct {
         return code.len;
     }
 
+    pub fn getCode(self: *const StateDB, address: common.Address) []const u8 {
+        return self.codes.get(address) orelse &.{};
+    }
+
     pub fn setCode(self: *StateDB, allocator: std.mem.Allocator, address: common.Address, code: []const u8) !void {
         const owned_code = try allocator.dupe(u8, code);
         errdefer allocator.free(owned_code);
@@ -69,4 +73,5 @@ test "state db stores and reports code size by address" {
 
     try state_db.setCode(allocator, address, &[_]u8{ 0x60, 0xaa, 0x5b });
     try std.testing.expectEqual(@as(usize, 3), state_db.getCodeSize(address));
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x60, 0xaa, 0x5b }, state_db.getCode(address));
 }

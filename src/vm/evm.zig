@@ -40,6 +40,10 @@ pub const Evm = struct {
         return self.state_db.getCodeSize(address);
     }
 
+    pub fn getCode(self: *const Evm, address: common.Address) []const u8 {
+        return self.state_db.getCode(address);
+    }
+
     pub fn setTxContext(self: *Evm, tx_context: TxContext) void {
         self.tx_context = tx_context;
     }
