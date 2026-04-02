@@ -288,7 +288,7 @@ pub const byzantium: JumpTable = blk: {
         .max_stack    = maxStack(0, 1),
     };
     t.table[@intFromEnum(OpCode.RETURNDATACOPY)] = .{
-        .execute_fn   = opNotImplemented,
+        .execute_fn   = instructions.opReturnDataCopy,
         .constant_gas = gas_fast_step,
         .dynamic_op   = &dynamic_gas_and_memory,
         .min_stack    = minStack(3, 0),

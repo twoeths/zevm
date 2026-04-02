@@ -11,6 +11,7 @@ const Word         = @import("stack.zig").Word;
 pub const ExecError = error{
     StopToken,     // STOP, RETURN, SELFDESTRUCT — normal halt
     InvalidOpcode,
+    ReturnDataOutOfBounds,
 };
 
 // ── Control flow ──────────────────────────────────────────────────────────────
@@ -488,6 +489,35 @@ pub fn opReturnDataSize(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]
     return null;
 }
 
+/// RETURNDATACOPY (0x3e): copy bytes from the last call's return data into memory.
+/// Returns ReturnDataOutOfBounds when the requested slice exceeds the available buffer.
+pub fn opReturnDataCopy(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = pc;
+    const mem_offset = scope.stack.pop();
+    const data_offset = scope.stack.pop();
+    const length = scope.stack.pop();
+
+    if (data_offset > std.math.maxInt(usize)) {
+        return error.ReturnDataOutOfBounds;
+    }
+
+    const data_offset_usize: usize = @intCast(data_offset);
+    const length_usize: usize = @intCast(length);
+    const end = std.math.add(usize, data_offset_usize, length_usize) catch {
+        return error.ReturnDataOutOfBounds;
+    };
+    if (end > evm.return_data.len) {
+        return error.ReturnDataOutOfBounds;
+    }
+
+    if (length_usize == 0) {
+        return null;
+    }
+
+    scope.memory.set(@intCast(mem_offset), length_usize, evm.return_data[data_offset_usize..end]);
+    return null;
+}
+
 // ── Hash ──────────────────────────────────────────────────────────────────────
 
 /// KECCAK256 (0x20): pop offset, peek size, size = keccak256(memory[offset..offset+size]).
@@ -895,6 +925,53 @@ test "opReturnDataSize: pushes last return data length" {
 
     _ = try opReturnDataSize(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(Word, 5), scope.stack.peek().*);
+}
+
+test "opReturnDataCopy: copies return data into memory" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Byzantium);
+    defer evm.deinit();
+    evm.return_data = "hello";
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    try memory.resize(8);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(3); // length
+    stack.push(1); // data offset
+    stack.push(0); // mem offset (top)
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opReturnDataCopy(&pc, &evm, &scope);
+    try std.testing.expectEqualSlices(u8, "ell", memory.getPtr(0, 3));
+}
+
+test "opReturnDataCopy: returns error on out-of-bounds slice" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Byzantium);
+    defer evm.deinit();
+    evm.return_data = "hello";
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    try memory.resize(8);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(3); // length
+    stack.push(4); // data offset
+    stack.push(0); // mem offset (top)
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    try std.testing.expectError(error.ReturnDataOutOfBounds, opReturnDataCopy(&pc, &evm, &scope));
 }
 
 test "opAdd: 2 + 3 = 5" {
