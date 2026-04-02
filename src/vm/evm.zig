@@ -17,6 +17,7 @@ pub const Evm = struct {
     jump_table: *const jump_table.JumpTable,
     jump_dests: JumpDestCache,
     tx_context: TxContext = .{},
+    return_data: []const u8 = &.{},
 
     pub fn init(allocator: std.mem.Allocator, state_db: *StateDB, fork: jump_table.Fork) Evm {
         return .{

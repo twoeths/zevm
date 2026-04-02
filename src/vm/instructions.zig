@@ -481,6 +481,13 @@ pub fn opExtCodeCopy(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 
     return null;
 }
 
+/// RETURNDATASIZE (0x3d): push the byte length of the last call's return data buffer.
+pub fn opReturnDataSize(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = .{ pc, scope };
+    scope.stack.push(evm.return_data.len);
+    return null;
+}
+
 // ── Hash ──────────────────────────────────────────────────────────────────────
 
 /// KECCAK256 (0x20): pop offset, peek size, size = keccak256(memory[offset..offset+size]).
@@ -868,6 +875,26 @@ test "opExtCodeCopy: out-of-range offset writes zero bytes" {
 
     _ = try opExtCodeCopy(&pc, &evm, &scope);
     try std.testing.expectEqualSlices(u8, &[_]u8{ 0x00, 0x00, 0x00, 0x00 }, memory.getPtr(0, 4));
+}
+
+test "opReturnDataSize: pushes last return data length" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Byzantium);
+    defer evm.deinit();
+    evm.return_data = "hello";
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opReturnDataSize(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(Word, 5), scope.stack.peek().*);
 }
 
 test "opAdd: 2 + 3 = 5" {
