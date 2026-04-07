@@ -316,7 +316,7 @@ pub const constantinople: JumpTable = blk: {
     t.table[@intFromEnum(OpCode.SHL)]         = .{ .execute_fn = instructions.opShl, .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
     t.table[@intFromEnum(OpCode.SHR)]         = .{ .execute_fn = instructions.opShr, .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
     t.table[@intFromEnum(OpCode.SAR)]         = .{ .execute_fn = instructions.opSar, .constant_gas = gas_fastest_step, .min_stack = minStack(2, 1), .max_stack = maxStack(2, 1) };
-    t.table[@intFromEnum(OpCode.EXTCODEHASH)] = .{ .execute_fn = opNotImplemented, .constant_gas = gas_ext_step,     .min_stack = minStack(1, 1), .max_stack = maxStack(1, 1) };
+    t.table[@intFromEnum(OpCode.EXTCODEHASH)] = .{ .execute_fn = instructions.opExtCodeHash, .constant_gas = gas_ext_step,     .min_stack = minStack(1, 1), .max_stack = maxStack(1, 1) };
     t.table[@intFromEnum(OpCode.CREATE2)]     = .{
         .execute_fn   = opNotImplemented,
         .constant_gas = gas_slow_step,

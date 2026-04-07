@@ -312,11 +312,11 @@ pub fn opAddress(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
 /// BALANCE (0x31): replace the top stack item address with that account's balance.
 pub fn opBalance(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     _ = pc;
-    const slot = scope.stack.peek();
+    const top = scope.stack.peek();
     var buf = [_]u8{0} ** 32;
-    std.mem.writeInt(u256, &buf, slot.*, .big);
+    std.mem.writeInt(u256, &buf, top.*, .big);
     const address = common.bytesToAddress(buf[12..]);
-    slot.* = evm.getBalance(address);
+    top.* = evm.getBalance(address);
     return null;
 }
 
@@ -441,11 +441,11 @@ pub fn opGasprice(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
 /// Unlike CODESIZE, this queries state for an arbitrary external address from the stack.
 pub fn opExtCodeSize(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     _ = pc;
-    const slot = scope.stack.peek();
+    const top = scope.stack.peek();
     var buf = [_]u8{0} ** 32;
-    std.mem.writeInt(u256, &buf, slot.*, .big);
+    std.mem.writeInt(u256, &buf, top.*, .big);
     const address = common.bytesToAddress(buf[12..]);
-    slot.* = evm.getCodeSize(address);
+    top.* = evm.getCodeSize(address);
     return null;
 }
 
@@ -515,6 +515,25 @@ pub fn opReturnDataCopy(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]
     }
 
     scope.memory.set(@intCast(mem_offset), length_usize, evm.return_data[data_offset_usize..end]);
+    return null;
+}
+
+/// EXTCODEHASH (0x3f): replace the top stack item address with that account's code hash.
+/// Empty or non-existent accounts return zero; existing no-code accounts return the empty-code hash.
+pub fn opExtCodeHash(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = pc;
+    const top = scope.stack.peek();
+    var address_buf = [_]u8{0} ** 32;
+    std.mem.writeInt(u256, &address_buf, top.*, .big);
+    const address = common.bytesToAddress(address_buf[12..]);
+
+    if (evm.empty(address)) {
+        top.* = 0;
+        return null;
+    }
+
+    const code_hash = evm.getCodeHash(address);
+    top.* = std.mem.readInt(u256, &code_hash.bytes, .big);
     return null;
 }
 
@@ -972,6 +991,84 @@ test "opReturnDataCopy: returns error on out-of-bounds slice" {
     var pc: u64 = 0;
 
     try std.testing.expectError(error.ReturnDataOutOfBounds, opReturnDataCopy(&pc, &evm, &scope));
+}
+
+test "opExtCodeHash: replaces address with external account code hash" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    const address = try common.hexToAddress("0x00112233445566778899aabbccddeeff00112233");
+    const code = [_]u8{ 0x60, 0xaa, 0x5b, 0x00 };
+    try state_db.setCode(allocator, address, &code);
+    var evm = initTestEvm(allocator, &state_db, .Constantinople);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    var address_buf = [_]u8{0} ** 32;
+    @memcpy(address_buf[12..], &address.bytes);
+    stack.push(std.mem.readInt(u256, &address_buf, .big));
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opExtCodeHash(&pc, &evm, &scope);
+
+    var expected_hash: [32]u8 = undefined;
+    std.crypto.hash.sha3.Keccak256.hash(&code, &expected_hash, .{});
+    try std.testing.expectEqual(std.mem.readInt(u256, &expected_hash, .big), scope.stack.peek().*);
+}
+
+test "opExtCodeHash: empty account returns zero" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    const address = try common.hexToAddress("0x00112233445566778899aabbccddeeff00112233");
+    var evm = initTestEvm(allocator, &state_db, .Constantinople);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    var address_buf = [_]u8{0} ** 32;
+    @memcpy(address_buf[12..], &address.bytes);
+    stack.push(std.mem.readInt(u256, &address_buf, .big));
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opExtCodeHash(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(Word, 0), scope.stack.peek().*);
+}
+
+test "opExtCodeHash: funded no-code account returns empty code hash" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    const address = try common.hexToAddress("0x00112233445566778899aabbccddeeff00112233");
+    try state_db.setBalance(allocator, address, 1);
+    var evm = initTestEvm(allocator, &state_db, .Constantinople);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    var address_buf = [_]u8{0} ** 32;
+    @memcpy(address_buf[12..], &address.bytes);
+    stack.push(std.mem.readInt(u256, &address_buf, .big));
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opExtCodeHash(&pc, &evm, &scope);
+
+    var expected_hash: [32]u8 = undefined;
+    std.crypto.hash.sha3.Keccak256.hash(&.{}, &expected_hash, .{});
+    try std.testing.expectEqual(std.mem.readInt(u256, &expected_hash, .big), scope.stack.peek().*);
 }
 
 test "opAdd: 2 + 3 = 5" {

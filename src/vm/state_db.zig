@@ -39,6 +39,20 @@ pub const StateDB = struct {
         return self.codes.get(address) orelse &.{};
     }
 
+    pub fn getCodeHash(self: *const StateDB, address: common.Address) common.Hash {
+        if (self.empty(address)) {
+            return .{};
+        }
+
+        var out: [32]u8 = undefined;
+        std.crypto.hash.sha3.Keccak256.hash(self.getCode(address), &out, .{});
+        return .{ .bytes = out };
+    }
+
+    pub fn empty(self: *const StateDB, address: common.Address) bool {
+        return self.getBalance(address) == 0 and self.getCodeSize(address) == 0;
+    }
+
     pub fn setCode(self: *StateDB, allocator: std.mem.Allocator, address: common.Address, code: []const u8) !void {
         const owned_code = try allocator.dupe(u8, code);
         errdefer allocator.free(owned_code);
@@ -74,4 +88,25 @@ test "state db stores and reports code size by address" {
     try state_db.setCode(allocator, address, &[_]u8{ 0x60, 0xaa, 0x5b });
     try std.testing.expectEqual(@as(usize, 3), state_db.getCodeSize(address));
     try std.testing.expectEqualSlices(u8, &[_]u8{ 0x60, 0xaa, 0x5b }, state_db.getCode(address));
+    try std.testing.expect(!state_db.empty(address));
+
+    var expected: [32]u8 = undefined;
+    std.crypto.hash.sha3.Keccak256.hash(&[_]u8{ 0x60, 0xaa, 0x5b }, &expected, .{});
+    try std.testing.expectEqualSlices(u8, &expected, state_db.getCodeHash(address).asBytes());
+}
+
+test "state db returns zero hash for empty accounts and empty code hash for funded no-code accounts" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+
+    const address = try common.hexToAddress("0x00112233445566778899aabbccddeeff00112233");
+    try std.testing.expect(state_db.empty(address));
+    try std.testing.expectEqualSlices(u8, &([_]u8{0} ** 32), state_db.getCodeHash(address).asBytes());
+
+    try state_db.setBalance(allocator, address, 1);
+    var expected_empty_code_hash: [32]u8 = undefined;
+    std.crypto.hash.sha3.Keccak256.hash(&.{}, &expected_empty_code_hash, .{});
+    try std.testing.expect(!state_db.empty(address));
+    try std.testing.expectEqualSlices(u8, &expected_empty_code_hash, state_db.getCodeHash(address).asBytes());
 }

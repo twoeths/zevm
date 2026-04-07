@@ -45,6 +45,14 @@ pub const Evm = struct {
         return self.state_db.getCode(address);
     }
 
+    pub fn getCodeHash(self: *const Evm, address: common.Address) common.Hash {
+        return self.state_db.getCodeHash(address);
+    }
+
+    pub fn empty(self: *const Evm, address: common.Address) bool {
+        return self.state_db.empty(address);
+    }
+
     pub fn setTxContext(self: *Evm, tx_context: TxContext) void {
         self.tx_context = tx_context;
     }
