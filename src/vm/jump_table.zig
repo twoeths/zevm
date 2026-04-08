@@ -348,8 +348,10 @@ pub const london: JumpTable = blk: {
 };
 
 pub const merge: JumpTable = blk: {
-    // DIFFICULTY renamed to PREVRANDAO (EIP-4399): same byte 0x44, execute_fn changes when implemented
-    break :blk london;
+    var t = london;
+    // DIFFICULTY renamed to PREVRANDAO (EIP-4399): same byte 0x44, execute_fn changes from block difficulty to randomness.
+    t.table[@intFromEnum(OpCode.DIFFICULTY)] = .{ .execute_fn = instructions.opRandom, .constant_gas = gas_quick_step, .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
+    break :blk t;
 };
 
 pub const shanghai: JumpTable = blk: {
