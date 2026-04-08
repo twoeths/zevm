@@ -560,6 +560,15 @@ pub fn opBlockhash(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     return null;
 }
 
+/// COINBASE (0x41): push the current block beneficiary address as a 32-byte word.
+pub fn opCoinbase(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = .{ pc, scope };
+    var buf = [_]u8{0} ** 32;
+    @memcpy(buf[12..], &evm.block_context.coinbase.bytes);
+    scope.stack.push(std.mem.readInt(u256, &buf, .big));
+    return null;
+}
+
 // ── Hash ──────────────────────────────────────────────────────────────────────
 
 /// KECCAK256 (0x20): pop offset, peek size, size = keccak256(memory[offset..offset+size]).
@@ -1174,6 +1183,29 @@ test "opBlockhash: older than 256 blocks returns zero" {
 
     _ = try opBlockhash(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(Word, 0), scope.stack.peek().*);
+}
+
+test "opCoinbase: pushes current block beneficiary as u256" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    evm.setBlockContext(.{
+        .coinbase = try common.hexToAddress("0xaabbccddeeff0011223344556677889900112233"),
+        .block_number = 100,
+    });
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opCoinbase(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(Word, 0xaabbccddeeff0011223344556677889900112233), scope.stack.peek().*);
 }
 
 test "opAdd: 2 + 3 = 5" {
