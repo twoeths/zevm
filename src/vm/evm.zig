@@ -11,11 +11,28 @@ pub const TxContext = struct {
     gas_price: u256 = 0,
 };
 
+pub const GetHashFn = *const fn (ctx: *anyopaque, block_number: u64) common.Hash;
+
+pub const BlockContext = struct {
+    // The current block number for this execution.
+    block_number: u64 = 0,
+    // Optional host callback for resolving recent block hashes.
+    get_hash_ctx: ?*anyopaque = null,
+    get_hash_fn: ?GetHashFn = null,
+
+    pub fn getHash(self: *const BlockContext, block_number: u64) common.Hash {
+        const get_hash_fn = self.get_hash_fn orelse return .{};
+        const get_hash_ctx = self.get_hash_ctx orelse return .{};
+        return get_hash_fn(get_hash_ctx, block_number);
+    }
+};
+
 pub const Evm = struct {
     allocator: std.mem.Allocator,
     state_db: *StateDB,
     jump_table: *const jump_table.JumpTable,
     jump_dests: JumpDestCache,
+    block_context: BlockContext = .{},
     tx_context: TxContext = .{},
     return_data: []const u8 = &.{},
 
@@ -55,5 +72,9 @@ pub const Evm = struct {
 
     pub fn setTxContext(self: *Evm, tx_context: TxContext) void {
         self.tx_context = tx_context;
+    }
+
+    pub fn setBlockContext(self: *Evm, block_context: BlockContext) void {
+        self.block_context = block_context;
     }
 };

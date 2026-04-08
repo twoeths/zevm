@@ -1,15 +1,15 @@
-const std          = @import("std");
-const common       = @import("common");
-const Evm          = @import("evm.zig").Evm;
-const Fork         = @import("jump_table.zig").Fork;
+const std = @import("std");
+const common = @import("common");
+const Evm = @import("evm.zig").Evm;
+const Fork = @import("jump_table.zig").Fork;
 const ScopeContext = @import("interpreter.zig").ScopeContext;
-const StateDB      = @import("state_db.zig").StateDB;
-const Word         = @import("stack.zig").Word;
+const StateDB = @import("state_db.zig").StateDB;
+const Word = @import("stack.zig").Word;
 
 /// Typed error set for opcode execution functions.
 /// Extended as new opcodes are implemented.
 pub const ExecError = error{
-    StopToken,     // STOP, RETURN, SELFDESTRUCT — normal halt
+    StopToken, // STOP, RETURN, SELFDESTRUCT — normal halt
     InvalidOpcode,
     ReturnDataOutOfBounds,
 };
@@ -237,7 +237,7 @@ pub fn opNot(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
 /// BYTE (0x1a): pop th, peek val, val = byte at index th (0 = MSB). Returns 0 if th >= 32.
 pub fn opByte(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     _ = .{ pc, evm };
-    const th  = scope.stack.pop();
+    const th = scope.stack.pop();
     const val = scope.stack.peek();
     if (th >= 32) {
         val.* = 0;
@@ -260,7 +260,7 @@ pub fn opClz(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
 pub fn opShl(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     _ = .{ pc, evm };
     const shift = scope.stack.pop();
-    const val   = scope.stack.peek();
+    const val = scope.stack.peek();
     if (shift >= 256) {
         val.* = 0;
         return null;
@@ -273,7 +273,7 @@ pub fn opShl(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
 pub fn opShr(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     _ = .{ pc, evm };
     const shift = scope.stack.pop();
-    const val   = scope.stack.peek();
+    const val = scope.stack.peek();
     if (shift >= 256) {
         val.* = 0;
         return null;
@@ -287,7 +287,7 @@ pub fn opShr(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
 pub fn opSar(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     _ = .{ pc, evm };
     const shift = scope.stack.pop();
-    const val   = scope.stack.peek();
+    const val = scope.stack.peek();
     const sv: i256 = @bitCast(val.*);
     if (shift >= 256) {
         val.* = if (sv < 0) std.math.maxInt(u256) else 0;
@@ -537,14 +537,37 @@ pub fn opExtCodeHash(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 
     return null;
 }
 
+/// BLOCKHASH (0x40): replace the top stack item with the hash of a recent block.
+/// Only the previous 256 blocks are queryable; current/future or older blocks return zero.
+/// this is the "getBlockHashByNumber()" api
+pub fn opBlockhash(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = pc;
+    const top = scope.stack.peek();
+    if (top.* > std.math.maxInt(u64)) {
+        top.* = 0;
+        return null;
+    }
+
+    const requested = @as(u64, @intCast(top.*));
+    const upper = evm.block_context.block_number;
+    const lower: u64 = if (upper < 257) 0 else upper - 256;
+    if (requested >= lower and requested < upper) {
+        const hash = evm.block_context.getHash(requested);
+        top.* = std.mem.readInt(u256, &hash.bytes, .big);
+    } else {
+        top.* = 0;
+    }
+    return null;
+}
+
 // ── Hash ──────────────────────────────────────────────────────────────────────
 
 /// KECCAK256 (0x20): pop offset, peek size, size = keccak256(memory[offset..offset+size]).
 pub fn opKeccak256(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     _ = .{ pc, evm };
     const offset = scope.stack.pop();
-    const size   = scope.stack.peek();
-    const data   = scope.memory.getPtr(@intCast(offset), @intCast(size.*));
+    const size = scope.stack.peek();
+    const data = scope.memory.getPtr(@intCast(offset), @intCast(size.*));
     var buf: [32]u8 = undefined;
     // TODO zevm: may want to make this generic by calling an Evm function like in go-ethereum
     std.crypto.hash.sha3.Keccak256.hash(data, &buf, .{});
@@ -1071,6 +1094,88 @@ test "opExtCodeHash: funded no-code account returns empty code hash" {
     try std.testing.expectEqual(std.mem.readInt(u256, &expected_hash, .big), scope.stack.peek().*);
 }
 
+test "opBlockhash: returns hash for recent block" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    const HashCtx = struct {
+        expected_block: u64,
+        hash: common.Hash,
+
+        fn getHash(ctx: *anyopaque, block_number: u64) common.Hash {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            std.testing.expectEqual(self.expected_block, block_number) catch unreachable;
+            return self.hash;
+        }
+    };
+
+    var hash_ctx = HashCtx{
+        .expected_block = 99,
+        .hash = try common.hexToHash("0x00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"),
+    };
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    evm.setBlockContext(.{
+        .block_number = 100,
+        .get_hash_ctx = &hash_ctx,
+        .get_hash_fn = HashCtx.getHash,
+    });
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(99);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opBlockhash(&pc, &evm, &scope);
+    try std.testing.expectEqual(std.mem.readInt(u256, &hash_ctx.hash.bytes, .big), scope.stack.peek().*);
+}
+
+test "opBlockhash: current block returns zero" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    evm.setBlockContext(.{ .block_number = 100 });
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(100);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opBlockhash(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(Word, 0), scope.stack.peek().*);
+}
+
+test "opBlockhash: older than 256 blocks returns zero" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    evm.setBlockContext(.{ .block_number = 300 });
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(43);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opBlockhash(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(Word, 0), scope.stack.peek().*);
+}
+
 test "opAdd: 2 + 3 = 5" {
     const allocator = std.testing.allocator;
     var state_db = StateDB.init();
@@ -1411,8 +1516,8 @@ test "opAddmod: overflow sum (maxInt + 1) % 2 = 0" {
     defer memory.deinit();
     var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
     var stack = @import("stack.zig").Stack.init(&stack_buf);
-    stack.push(2);                    // z
-    stack.push(1);                    // y
+    stack.push(2); // z
+    stack.push(1); // y
     stack.push(std.math.maxInt(u256)); // x
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
@@ -1432,9 +1537,9 @@ test "opAddmod: modulus zero returns 0" {
     defer memory.deinit();
     var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
     var stack = @import("stack.zig").Stack.init(&stack_buf);
-    stack.push(0);  // z
-    stack.push(3);  // y
-    stack.push(2);  // x
+    stack.push(0); // z
+    stack.push(3); // y
+    stack.push(2); // x
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     _ = try opAddmod(&pc, &evm, &scope);
@@ -1520,7 +1625,7 @@ test "opExp: 2 ** 10 = 1024" {
     var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
     var stack = @import("stack.zig").Stack.init(&stack_buf);
     stack.push(10); // exponent
-    stack.push(2);  // base — top
+    stack.push(2); // base — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     _ = try opExp(&pc, &evm, &scope);
@@ -1539,7 +1644,7 @@ test "opExp: x ** 0 = 1" {
     defer memory.deinit();
     var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
     var stack = @import("stack.zig").Stack.init(&stack_buf);
-    stack.push(0);  // exponent
+    stack.push(0); // exponent
     stack.push(42); // base
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
@@ -1560,7 +1665,7 @@ test "opExp: 2 ** 256 wraps to 0" {
     var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
     var stack = @import("stack.zig").Stack.init(&stack_buf);
     stack.push(256); // exponent
-    stack.push(2);   // base
+    stack.push(2); // base
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     _ = try opExp(&pc, &evm, &scope);
@@ -1583,8 +1688,8 @@ test "opStop returns StopToken" {
     var stack = @import("stack.zig").Stack.init(&stack_buf);
 
     var scope = ScopeContext{
-        .memory   = &memory,
-        .stack    = &stack,
+        .memory = &memory,
+        .stack = &stack,
         .contract = &contract,
     };
 
@@ -1687,7 +1792,7 @@ test "opSlt: -1 < 1 = 1" {
     var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
     var stack = @import("stack.zig").Stack.init(&stack_buf);
     const neg1: u256 = @bitCast(@as(i256, -1));
-    stack.push(1);    // y
+    stack.push(1); // y
     stack.push(neg1); // x — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
@@ -1709,7 +1814,7 @@ test "opSlt: 1 < -1 = 0" {
     var stack = @import("stack.zig").Stack.init(&stack_buf);
     const neg1: u256 = @bitCast(@as(i256, -1));
     stack.push(neg1); // y
-    stack.push(1);    // x — top
+    stack.push(1); // x — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     _ = try opSlt(&pc, &evm, &scope);
@@ -1730,7 +1835,7 @@ test "opSgt: 1 > -1 = 1" {
     var stack = @import("stack.zig").Stack.init(&stack_buf);
     const neg1: u256 = @bitCast(@as(i256, -1));
     stack.push(neg1); // y
-    stack.push(1);    // x — top
+    stack.push(1); // x — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     _ = try opSgt(&pc, &evm, &scope);
@@ -1750,7 +1855,7 @@ test "opSgt: -1 > 1 = 0" {
     var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
     var stack = @import("stack.zig").Stack.init(&stack_buf);
     const neg1: u256 = @bitCast(@as(i256, -1));
-    stack.push(1);    // y
+    stack.push(1); // y
     stack.push(neg1); // x — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
@@ -1947,7 +2052,7 @@ test "opByte: byte 31 of 0x42 = 0x42" {
     var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
     var stack = @import("stack.zig").Stack.init(&stack_buf);
     stack.push(0x42); // val
-    stack.push(31);   // th — top (LSB is byte 31)
+    stack.push(31); // th — top (LSB is byte 31)
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     _ = try opByte(&pc, &evm, &scope);
@@ -1967,7 +2072,7 @@ test "opByte: th >= 32 returns 0" {
     var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
     var stack = @import("stack.zig").Stack.init(&stack_buf);
     stack.push(0xFF); // val
-    stack.push(32);   // th — out of range
+    stack.push(32); // th — out of range
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     _ = try opByte(&pc, &evm, &scope);
@@ -2006,7 +2111,7 @@ test "opShl: shift >= 256 returns 0" {
     defer memory.deinit();
     var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
     var stack = @import("stack.zig").Stack.init(&stack_buf);
-    stack.push(1);   // val
+    stack.push(1); // val
     stack.push(256); // shift — out of range
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
@@ -2047,7 +2152,7 @@ test "opShr: shift >= 256 returns 0" {
     var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
     var stack = @import("stack.zig").Stack.init(&stack_buf);
     stack.push(0xFF); // val
-    stack.push(256);  // shift — out of range
+    stack.push(256); // shift — out of range
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     _ = try opShr(&pc, &evm, &scope);
@@ -2068,7 +2173,7 @@ test "opSar: -4 >> 1 = -2 (sign extending)" {
     var stack = @import("stack.zig").Stack.init(&stack_buf);
     const neg4: u256 = @bitCast(@as(i256, -4));
     stack.push(neg4); // val
-    stack.push(1);    // shift — top
+    stack.push(1); // shift — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     _ = try opSar(&pc, &evm, &scope);
@@ -2090,7 +2195,7 @@ test "opSar: shift >= 256 with negative value returns all-ones" {
     var stack = @import("stack.zig").Stack.init(&stack_buf);
     const neg1: u256 = @bitCast(@as(i256, -1));
     stack.push(neg1); // val (negative)
-    stack.push(256);  // shift — out of range
+    stack.push(256); // shift — out of range
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     _ = try opSar(&pc, &evm, &scope);
@@ -2109,7 +2214,7 @@ test "opSar: shift >= 256 with positive value returns 0" {
     defer memory.deinit();
     var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
     var stack = @import("stack.zig").Stack.init(&stack_buf);
-    stack.push(42);  // val (positive)
+    stack.push(42); // val (positive)
     stack.push(256); // shift — out of range
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
@@ -2213,7 +2318,7 @@ test "opKeccak256: hash of known data" {
     try memory.resize(input.len);
     memory.set(0, input.len, &input);
     stack.push(input.len); // size
-    stack.push(0);         // offset — top
+    stack.push(0); // offset — top
     var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
     var pc: u64 = 0;
     _ = try opKeccak256(&pc, &evm, &scope);
