@@ -16,6 +16,8 @@ pub const GetHashFn = *const fn (ctx: *anyopaque, block_number: u64) common.Hash
 pub const BlockContext = struct {
     // The current block beneficiary address.
     coinbase: common.Address = .{},
+    // The current block timestamp.
+    timestamp: u64 = 0,
     // The current block number for this execution.
     block_number: u64 = 0,
     // Optional host callback for resolving recent block hashes.
