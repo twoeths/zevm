@@ -20,6 +20,8 @@ pub const BlockContext = struct {
     timestamp: u64 = 0,
     // The current block number for this execution.
     block_number: u64 = 0,
+    // The current block difficulty (or opcode 0x44 source before Merge semantics change).
+    difficulty: u256 = 0,
     // Optional host callback for resolving recent block hashes.
     get_hash_ctx: ?*anyopaque = null,
     get_hash_fn: ?GetHashFn = null,

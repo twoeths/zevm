@@ -190,7 +190,7 @@ pub const frontier: JumpTable = blk: {
     t[@intFromEnum(OpCode.COINBASE)]   = .{ .execute_fn = instructions.opCoinbase, .constant_gas = gas_quick_step, .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
     t[@intFromEnum(OpCode.TIMESTAMP)]  = .{ .execute_fn = instructions.opTimestamp, .constant_gas = gas_quick_step, .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
     t[@intFromEnum(OpCode.NUMBER)]     = .{ .execute_fn = instructions.opNumber, .constant_gas = gas_quick_step, .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
-    t[@intFromEnum(OpCode.DIFFICULTY)] = .{ .execute_fn = opNotImplemented, .constant_gas = gas_quick_step, .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
+    t[@intFromEnum(OpCode.DIFFICULTY)] = .{ .execute_fn = instructions.opDifficulty, .constant_gas = gas_quick_step, .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
     t[@intFromEnum(OpCode.GASLIMIT)]   = .{ .execute_fn = opNotImplemented, .constant_gas = gas_quick_step, .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
 
     t[@intFromEnum(OpCode.POP)]     = .{ .execute_fn = opNotImplemented, .constant_gas = gas_quick_step,   .min_stack = minStack(1, 0), .max_stack = maxStack(1, 0) };

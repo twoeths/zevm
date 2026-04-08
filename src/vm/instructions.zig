@@ -583,6 +583,13 @@ pub fn opNumber(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     return null;
 }
 
+/// DIFFICULTY (0x44): push the current block difficulty context value.
+pub fn opDifficulty(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = .{ pc, scope };
+    scope.stack.push(evm.block_context.difficulty);
+    return null;
+}
+
 // ── Hash ──────────────────────────────────────────────────────────────────────
 
 /// KECCAK256 (0x20): pop offset, peek size, size = keccak256(memory[offset..offset+size]).
@@ -1266,6 +1273,30 @@ test "opNumber: pushes current block number" {
 
     _ = try opNumber(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(Word, 12345678), scope.stack.peek().*);
+}
+
+test "opDifficulty: pushes current block difficulty" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    evm.setBlockContext(.{
+        .timestamp = 1_710_000_000,
+        .block_number = 12345678,
+        .difficulty = 0x123456789abcdef0,
+    });
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opDifficulty(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(Word, 0x123456789abcdef0), scope.stack.peek().*);
 }
 
 test "opAdd: 2 + 3 = 5" {
