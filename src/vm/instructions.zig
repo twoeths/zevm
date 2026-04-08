@@ -598,6 +598,13 @@ pub fn opRandom(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     return null;
 }
 
+/// GASLIMIT (0x45): push the current block gas limit.
+pub fn opGasLimit(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = .{ pc, scope };
+    scope.stack.push(evm.block_context.gas_limit);
+    return null;
+}
+
 // ── Hash ──────────────────────────────────────────────────────────────────────
 
 /// KECCAK256 (0x20): pop offset, peek size, size = keccak256(memory[offset..offset+size]).
@@ -1329,6 +1336,29 @@ test "opRandom: pushes merge randomness value" {
 
     _ = try opRandom(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(Word, 0x00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff), scope.stack.peek().*);
+}
+
+test "opGasLimit: pushes current block gas limit" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    evm.setBlockContext(.{
+        .block_number = 12345678,
+        .gas_limit = 30_000_000,
+    });
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opGasLimit(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(Word, 30_000_000), scope.stack.peek().*);
 }
 
 test "opAdd: 2 + 3 = 5" {

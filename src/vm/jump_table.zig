@@ -1,5 +1,6 @@
 const std       = @import("std");
 const OpCode    = @import("opcodes.zig").OpCode;
+const PREVRANDAO = @import("opcodes.zig").PREVRANDAO;
 const stack_mod = @import("stack.zig");
 const Stack     = stack_mod.Stack;
 const Memory    = @import("memory.zig").Memory;
@@ -191,7 +192,7 @@ pub const frontier: JumpTable = blk: {
     t[@intFromEnum(OpCode.TIMESTAMP)]  = .{ .execute_fn = instructions.opTimestamp, .constant_gas = gas_quick_step, .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
     t[@intFromEnum(OpCode.NUMBER)]     = .{ .execute_fn = instructions.opNumber, .constant_gas = gas_quick_step, .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
     t[@intFromEnum(OpCode.DIFFICULTY)] = .{ .execute_fn = instructions.opDifficulty, .constant_gas = gas_quick_step, .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
-    t[@intFromEnum(OpCode.GASLIMIT)]   = .{ .execute_fn = opNotImplemented, .constant_gas = gas_quick_step, .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
+    t[@intFromEnum(OpCode.GASLIMIT)]   = .{ .execute_fn = instructions.opGasLimit, .constant_gas = gas_quick_step, .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
 
     t[@intFromEnum(OpCode.POP)]     = .{ .execute_fn = opNotImplemented, .constant_gas = gas_quick_step,   .min_stack = minStack(1, 0), .max_stack = maxStack(1, 0) };
     t[@intFromEnum(OpCode.MLOAD)]   = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fastest_step, .dynamic_op = &dynamic_gas_and_memory, .min_stack = minStack(1, 1), .max_stack = maxStack(1, 1) };
@@ -349,8 +350,8 @@ pub const london: JumpTable = blk: {
 
 pub const merge: JumpTable = blk: {
     var t = london;
-    // DIFFICULTY renamed to PREVRANDAO (EIP-4399): same byte 0x44, execute_fn changes from block difficulty to randomness.
-    t.table[@intFromEnum(OpCode.DIFFICULTY)] = .{ .execute_fn = instructions.opRandom, .constant_gas = gas_quick_step, .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
+    // PREVRANDAO reuses opcode 0x44 after Merge and maps to opRandom.
+    t.table[@intFromEnum(PREVRANDAO)] = .{ .execute_fn = instructions.opRandom, .constant_gas = gas_quick_step, .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
     break :blk t;
 };
 

@@ -20,6 +20,8 @@ pub const BlockContext = struct {
     timestamp: u64 = 0,
     // The current block number for this execution.
     block_number: u64 = 0,
+    // The current block gas limit.
+    gas_limit: u64 = 0,
     // The current block difficulty (or opcode 0x44 source before Merge semantics change).
     difficulty: u256 = 0,
     // The randomness value exposed by PREVRANDAO/RANDOM after Merge.
