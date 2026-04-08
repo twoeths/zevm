@@ -576,6 +576,13 @@ pub fn opTimestamp(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     return null;
 }
 
+/// NUMBER (0x43): push the current block number.
+pub fn opNumber(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = .{ pc, scope };
+    scope.stack.push(evm.block_context.block_number);
+    return null;
+}
+
 // ── Hash ──────────────────────────────────────────────────────────────────────
 
 /// KECCAK256 (0x20): pop offset, peek size, size = keccak256(memory[offset..offset+size]).
@@ -1236,6 +1243,29 @@ test "opTimestamp: pushes current block timestamp" {
 
     _ = try opTimestamp(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(Word, 1_710_000_000), scope.stack.peek().*);
+}
+
+test "opNumber: pushes current block number" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    evm.setBlockContext(.{
+        .timestamp = 1_710_000_000,
+        .block_number = 12345678,
+    });
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opNumber(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(Word, 12345678), scope.stack.peek().*);
 }
 
 test "opAdd: 2 + 3 = 5" {
