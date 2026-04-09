@@ -331,7 +331,7 @@ pub const constantinople: JumpTable = blk: {
 pub const istanbul: JumpTable = blk: {
     var t = constantinople;
     t.table[@intFromEnum(OpCode.CHAINID)]     = .{ .execute_fn = instructions.opChainID, .constant_gas = gas_quick_step, .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
-    t.table[@intFromEnum(OpCode.SELFBALANCE)] = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fast_step,  .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
+    t.table[@intFromEnum(OpCode.SELFBALANCE)] = .{ .execute_fn = instructions.opSelfBalance, .constant_gas = gas_fast_step,  .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
     // EIP-1884: reprice BALANCE
     t.table[@intFromEnum(OpCode.BALANCE)].constant_gas = gas_slow_step;
     break :blk t;

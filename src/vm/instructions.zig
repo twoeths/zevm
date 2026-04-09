@@ -612,6 +612,13 @@ pub fn opChainID(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     return null;
 }
 
+/// SELFBALANCE (0x47): push the balance of the currently executing contract.
+pub fn opSelfBalance(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = .{ pc, scope };
+    scope.stack.push(evm.getBalance(scope.contract.address));
+    return null;
+}
+
 // ── Hash ──────────────────────────────────────────────────────────────────────
 
 /// KECCAK256 (0x20): pop offset, peek size, size = keccak256(memory[offset..offset+size]).
@@ -1388,6 +1395,27 @@ test "opChainID: pushes configured chain ID" {
 
     _ = try opChainID(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(Word, 11155111), scope.stack.peek().*);
+}
+
+test "opSelfBalance: pushes current contract balance" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Istanbul);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    contract.address = try common.hexToAddress("0x00112233445566778899aabbccddeeff00112233");
+    try state_db.setBalance(allocator, contract.address, 0x123456789abcdef0);
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opSelfBalance(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(Word, 0x123456789abcdef0), scope.stack.peek().*);
 }
 
 test "opAdd: 2 + 3 = 5" {
