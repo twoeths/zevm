@@ -344,7 +344,7 @@ pub const berlin: JumpTable = blk: {
 
 pub const london: JumpTable = blk: {
     var t = berlin;
-    t.table[@intFromEnum(OpCode.BASEFEE)] = .{ .execute_fn = opNotImplemented, .constant_gas = gas_quick_step, .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
+    t.table[@intFromEnum(OpCode.BASEFEE)] = .{ .execute_fn = instructions.opBaseFee, .constant_gas = gas_quick_step, .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
     break :blk t;
 };
 

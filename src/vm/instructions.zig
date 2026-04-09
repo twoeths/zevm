@@ -619,6 +619,13 @@ pub fn opSelfBalance(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 
     return null;
 }
 
+/// BASEFEE (0x48): push the current block base fee.
+pub fn opBaseFee(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = .{ pc, scope };
+    scope.stack.push(evm.block_context.base_fee);
+    return null;
+}
+
 // ── Hash ──────────────────────────────────────────────────────────────────────
 
 /// KECCAK256 (0x20): pop offset, peek size, size = keccak256(memory[offset..offset+size]).
@@ -1416,6 +1423,28 @@ test "opSelfBalance: pushes current contract balance" {
 
     _ = try opSelfBalance(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(Word, 0x123456789abcdef0), scope.stack.peek().*);
+}
+
+test "opBaseFee: pushes current block base fee" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .London);
+    defer evm.deinit();
+    evm.setBlockContext(.{
+        .base_fee = 0x123456789abcdef0123456789abcdef0,
+    });
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opBaseFee(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(Word, 0x123456789abcdef0123456789abcdef0), scope.stack.peek().*);
 }
 
 test "opAdd: 2 + 3 = 5" {
