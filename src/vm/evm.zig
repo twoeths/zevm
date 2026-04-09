@@ -11,6 +11,11 @@ pub const TxContext = struct {
     gas_price: u256 = 0,
 };
 
+pub const ChainConfig = struct {
+    // The chain ID used by the CHAINID opcode and replay protection.
+    chain_id: u256 = 0,
+};
+
 pub const GetHashFn = *const fn (ctx: *anyopaque, block_number: u64) common.Hash;
 
 pub const BlockContext = struct {
@@ -42,6 +47,7 @@ pub const Evm = struct {
     state_db: *StateDB,
     jump_table: *const jump_table.JumpTable,
     jump_dests: JumpDestCache,
+    chain_config: ChainConfig = .{},
     block_context: BlockContext = .{},
     tx_context: TxContext = .{},
     return_data: []const u8 = &.{},
@@ -86,5 +92,9 @@ pub const Evm = struct {
 
     pub fn setBlockContext(self: *Evm, block_context: BlockContext) void {
         self.block_context = block_context;
+    }
+
+    pub fn setChainConfig(self: *Evm, chain_config: ChainConfig) void {
+        self.chain_config = chain_config;
     }
 };

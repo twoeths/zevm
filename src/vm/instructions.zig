@@ -605,6 +605,13 @@ pub fn opGasLimit(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     return null;
 }
 
+/// CHAINID (0x46): push the configured chain ID for this EVM.
+pub fn opChainID(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = .{ pc, scope };
+    scope.stack.push(evm.chain_config.chain_id);
+    return null;
+}
+
 // ── Hash ──────────────────────────────────────────────────────────────────────
 
 /// KECCAK256 (0x20): pop offset, peek size, size = keccak256(memory[offset..offset+size]).
@@ -1359,6 +1366,28 @@ test "opGasLimit: pushes current block gas limit" {
 
     _ = try opGasLimit(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(Word, 30_000_000), scope.stack.peek().*);
+}
+
+test "opChainID: pushes configured chain ID" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Istanbul);
+    defer evm.deinit();
+    evm.setChainConfig(.{
+        .chain_id = 11155111,
+    });
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opChainID(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(Word, 11155111), scope.stack.peek().*);
 }
 
 test "opAdd: 2 + 3 = 5" {
