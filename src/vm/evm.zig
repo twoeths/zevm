@@ -9,6 +9,8 @@ pub const TxContext = struct {
     origin: common.Address = .{},
     // The per-unit gas price paid by the transaction.
     gas_price: u256 = 0,
+    // The transaction's versioned blob hashes, indexed by BLOBHASH.
+    blob_hashes: []const common.Hash = &.{},
 };
 
 pub const ChainConfig = struct {
