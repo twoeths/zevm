@@ -647,6 +647,13 @@ pub fn opBlobHash(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     return null;
 }
 
+/// BLOBBASEFEE (0x4a): push the current blob base fee.
+pub fn opBlobBaseFee(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = .{ pc, scope };
+    scope.stack.push(evm.block_context.blob_base_fee);
+    return null;
+}
+
 // ── Hash ──────────────────────────────────────────────────────────────────────
 
 /// KECCAK256 (0x20): pop offset, peek size, size = keccak256(memory[offset..offset+size]).
@@ -1517,6 +1524,28 @@ test "opBlobHash: clears top for out-of-range index" {
 
     _ = try opBlobHash(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(Word, 0), scope.stack.peek().*);
+}
+
+test "opBlobBaseFee: pushes current blob base fee" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Cancun);
+    defer evm.deinit();
+    evm.setBlockContext(.{
+        .blob_base_fee = 0xabcdef0123456789abcdef0123456789,
+    });
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opBlobBaseFee(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(Word, 0xabcdef0123456789abcdef0123456789), scope.stack.peek().*);
 }
 
 test "opAdd: 2 + 3 = 5" {

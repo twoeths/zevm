@@ -31,6 +31,8 @@ pub const BlockContext = struct {
     gas_limit: u64 = 0,
     // The current block base fee per gas unit.
     base_fee: u256 = 0,
+    // The current blob base fee per blob gas unit.
+    blob_base_fee: u256 = 0,
     // The current block difficulty (or opcode 0x44 source before Merge semantics change).
     difficulty: u256 = 0,
     // The randomness value exposed by PREVRANDAO/RANDOM after Merge.

@@ -366,7 +366,7 @@ pub const cancun: JumpTable = blk: {
     t.table[@intFromEnum(OpCode.TLOAD)]       = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fast_step,    .min_stack = minStack(1, 1), .max_stack = maxStack(1, 1) };
     t.table[@intFromEnum(OpCode.TSTORE)]      = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fast_step,    .min_stack = minStack(2, 0), .max_stack = maxStack(2, 0) };
     t.table[@intFromEnum(OpCode.BLOBHASH)]    = .{ .execute_fn = instructions.opBlobHash, .constant_gas = gas_fastest_step, .min_stack = minStack(1, 1), .max_stack = maxStack(1, 1) };
-    t.table[@intFromEnum(OpCode.BLOBBASEFEE)] = .{ .execute_fn = opNotImplemented, .constant_gas = gas_quick_step,   .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
+    t.table[@intFromEnum(OpCode.BLOBBASEFEE)] = .{ .execute_fn = instructions.opBlobBaseFee, .constant_gas = gas_quick_step,   .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
     t.table[@intFromEnum(OpCode.MCOPY)]       = .{ .execute_fn = opNotImplemented, .constant_gas = gas_fastest_step, .dynamic_op = &dynamic_gas_and_memory, .min_stack = minStack(3, 0), .max_stack = maxStack(3, 0) };
     break :blk t;
 };
