@@ -654,6 +654,33 @@ pub fn opBlobBaseFee(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 
     return null;
 }
 
+/// POP (0x50): discard the top stack item.
+pub fn opPop(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = .{ pc, evm };
+    _ = scope.stack.pop();
+    return null;
+}
+
+/// MLOAD (0x51): replace the top stack offset with the 32-byte word at that memory position.
+pub fn opMload(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = .{ pc, evm };
+    const top = scope.stack.peek();
+    const offset: usize = @intCast(top.*);
+    var word_buf: [32]u8 = undefined;
+    @memcpy(&word_buf, scope.memory.getPtr(offset, 32));
+    top.* = std.mem.readInt(u256, &word_buf, .big);
+    return null;
+}
+
+/// MSTORE (0x52): pop memory offset and word value, then write the full 32-byte word to memory.
+pub fn opMstore(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = .{ pc, evm };
+    const m_start = scope.stack.pop();
+    const val = scope.stack.pop();
+    scope.memory.set32(@intCast(m_start), val);
+    return null;
+}
+
 // ── Hash ──────────────────────────────────────────────────────────────────────
 
 /// KECCAK256 (0x20): pop offset, peek size, size = keccak256(memory[offset..offset+size]).
@@ -1546,6 +1573,83 @@ test "opBlobBaseFee: pushes current blob base fee" {
 
     _ = try opBlobBaseFee(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(Word, 0xabcdef0123456789abcdef0123456789), scope.stack.peek().*);
+}
+
+test "opPop: removes the top stack item" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0x11);
+    stack.push(0x22);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opPop(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(usize, 1), scope.stack.len());
+    try std.testing.expectEqual(@as(Word, 0x11), scope.stack.peek().*);
+}
+
+test "opMload: loads 32 bytes from memory into the top stack item" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    try memory.resize(64);
+    memory.set(4, 32, &[_]u8{
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+        0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+        0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
+    });
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(4);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opMload(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(Word, 0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20), scope.stack.peek().*);
+}
+
+test "opMstore: writes a 32-byte word to memory" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    try memory.resize(64);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20);
+    stack.push(4);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opMstore(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(usize, 0), scope.stack.len());
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+        0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+        0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
+    }, memory.getPtr(4, 32));
 }
 
 test "opAdd: 2 + 3 = 5" {
