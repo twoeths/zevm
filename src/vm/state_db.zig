@@ -5,8 +5,14 @@ const Word = @import("stack.zig").Word;
 /// Minimal in-memory StateDB backing needed by the current EVM implementation.
 /// Start with balances and grow this surface as more opcodes land.
 pub const StateDB = struct {
+    const StorageKey = struct {
+        address: common.Address,
+        storage_key: common.Hash,
+    };
+
     balances: std.AutoHashMapUnmanaged(common.Address, Word) = .{},
     codes: std.AutoHashMapUnmanaged(common.Address, []u8) = .{},
+    storage: std.AutoHashMapUnmanaged(StorageKey, common.Hash) = .{},
 
     pub fn init() StateDB {
         return .{};
@@ -18,6 +24,7 @@ pub const StateDB = struct {
             allocator.free(code.*);
         }
         self.codes.deinit(allocator);
+        self.storage.deinit(allocator);
         self.balances.deinit(allocator);
         self.* = undefined;
     }
@@ -51,6 +58,16 @@ pub const StateDB = struct {
 
     pub fn empty(self: *const StateDB, address: common.Address) bool {
         return self.getBalance(address) == 0 and self.getCodeSize(address) == 0;
+    }
+
+    /// Load a storage value for an account and storage key.
+    /// Equivalent to `GetState` in go-ethereum (geth).
+    pub fn getStorageValue(self: *const StateDB, address: common.Address, storage_key: common.Hash) common.Hash {
+        return self.storage.get(.{ .address = address, .storage_key = storage_key }) orelse .{};
+    }
+
+    pub fn setState(self: *StateDB, allocator: std.mem.Allocator, address: common.Address, storage_key: common.Hash, value: common.Hash) !void {
+        try self.storage.put(allocator, .{ .address = address, .storage_key = storage_key }, value);
     }
 
     pub fn setCode(self: *StateDB, allocator: std.mem.Allocator, address: common.Address, code: []const u8) !void {
@@ -109,4 +126,19 @@ test "state db returns zero hash for empty accounts and empty code hash for fund
     std.crypto.hash.sha3.Keccak256.hash(&.{}, &expected_empty_code_hash, .{});
     try std.testing.expect(!state_db.empty(address));
     try std.testing.expectEqualSlices(u8, &expected_empty_code_hash, state_db.getCodeHash(address).asBytes());
+}
+
+test "state db stores and loads storage slots by address and slot hash" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+
+    const address = try common.hexToAddress("0x00112233445566778899aabbccddeeff00112233");
+    const storage_key = try common.hexToHash("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    const value = try common.hexToHash("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+
+    try std.testing.expectEqualSlices(u8, &([_]u8{0} ** 32), state_db.getStorageValue(address, storage_key).asBytes());
+
+    try state_db.setState(allocator, address, storage_key, value);
+    try std.testing.expectEqualSlices(u8, value.asBytes(), state_db.getStorageValue(address, storage_key).asBytes());
 }

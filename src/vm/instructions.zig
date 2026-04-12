@@ -12,6 +12,8 @@ pub const ExecError = error{
     StopToken, // STOP, RETURN, SELFDESTRUCT — normal halt
     InvalidOpcode,
     ReturnDataOutOfBounds,
+    WriteProtection,
+    OutOfMemory,
 };
 
 // ── Control flow ──────────────────────────────────────────────────────────────
@@ -678,6 +680,50 @@ pub fn opMstore(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     const m_start = scope.stack.pop();
     const val = scope.stack.pop();
     scope.memory.set32(@intCast(m_start), val);
+    return null;
+}
+
+/// MSTORE8 (0x53): pop memory offset and value, then write only the low byte to memory.
+pub fn opMstore8(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = .{ pc, evm };
+    const offset = scope.stack.pop();
+    const val = scope.stack.pop();
+    scope.memory.getPtr(@intCast(offset), 1)[0] = @truncate(val);
+    return null;
+}
+
+/// SLOAD (0x54): replace the top stack slot index with the stored 32-byte value for this contract.
+pub fn opSload(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = pc;
+    const top = scope.stack.peek();
+    var storage_key_buf = [_]u8{0} ** 32;
+    std.mem.writeInt(u256, &storage_key_buf, top.*, .big);
+    const storage_key = common.Hash{ .bytes = storage_key_buf };
+    const value = evm.getStorageValue(scope.contract.address, storage_key);
+    top.* = std.mem.readInt(u256, &value.bytes, .big);
+    return null;
+}
+
+/// SSTORE (0x55): pop storage key and value, then write the 32-byte value for this contract.
+/// Returns WriteProtection when the EVM is executing in read-only mode.
+pub fn opSstore(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = pc;
+    if (evm.read_only) {
+        return error.WriteProtection;
+    }
+
+    const storage_key_word = scope.stack.pop();
+    const value_word = scope.stack.pop();
+
+    var storage_key_buf = [_]u8{0} ** 32;
+    std.mem.writeInt(u256, &storage_key_buf, storage_key_word, .big);
+    const storage_key = common.Hash{ .bytes = storage_key_buf };
+
+    var value_buf = [_]u8{0} ** 32;
+    std.mem.writeInt(u256, &value_buf, value_word, .big);
+    const value = common.Hash{ .bytes = value_buf };
+
+    try evm.setStorageValue(scope.contract.address, storage_key, value);
     return null;
 }
 
@@ -1650,6 +1696,105 @@ test "opMstore: writes a 32-byte word to memory" {
         0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
         0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
     }, memory.getPtr(4, 32));
+}
+
+test "opMstore8: writes only the low byte to memory" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    try memory.resize(8);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0x1234);
+    stack.push(3);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opMstore8(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(usize, 0), scope.stack.len());
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x00, 0x00, 0x00, 0x34, 0x00, 0x00, 0x00, 0x00 }, memory.getPtr(0, 8));
+}
+
+test "opSload: replaces slot index with stored contract value" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    contract.address = try common.hexToAddress("0x00112233445566778899aabbccddeeff00112233");
+    const storage_key = try common.hexToHash("0x0000000000000000000000000000000000000000000000000000000000000042");
+    const value = try common.hexToHash("0x11223344556677889900aabbccddeeff00112233445566778899aabbccddeeff");
+    try state_db.setState(allocator, contract.address, storage_key, value);
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0x42);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opSload(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(Word, 0x11223344556677889900aabbccddeeff00112233445566778899aabbccddeeff), scope.stack.peek().*);
+}
+
+test "opSstore: writes storage for the current contract" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    contract.address = try common.hexToAddress("0x00112233445566778899aabbccddeeff00112233");
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0x11223344556677889900aabbccddeeff00112233445566778899aabbccddeeff);
+    stack.push(0x42);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opSstore(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(usize, 0), scope.stack.len());
+
+    const storage_key = try common.hexToHash("0x0000000000000000000000000000000000000000000000000000000000000042");
+    const expected = try common.hexToHash("0x11223344556677889900aabbccddeeff00112233445566778899aabbccddeeff");
+    try std.testing.expectEqualSlices(u8, expected.asBytes(), state_db.getStorageValue(contract.address, storage_key).asBytes());
+}
+
+test "opSstore: rejects writes in read-only mode" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    evm.setReadOnly(true);
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    contract.address = try common.hexToAddress("0x00112233445566778899aabbccddeeff00112233");
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0x99);
+    stack.push(0x01);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    try std.testing.expectError(error.WriteProtection, opSstore(&pc, &evm, &scope));
+    try std.testing.expectEqual(@as(usize, 2), scope.stack.len());
+
+    const storage_key = try common.hexToHash("0x0000000000000000000000000000000000000000000000000000000000000001");
+    try std.testing.expectEqualSlices(u8, &([_]u8{0} ** 32), state_db.getStorageValue(contract.address, storage_key).asBytes());
 }
 
 test "opAdd: 2 + 3 = 5" {
