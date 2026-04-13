@@ -11,6 +11,7 @@ const Word = @import("stack.zig").Word;
 pub const ExecError = error{
     StopToken, // STOP, RETURN, SELFDESTRUCT — normal halt
     InvalidOpcode,
+    InvalidJump,
     ReturnDataOutOfBounds,
     WriteProtection,
     OutOfMemory,
@@ -724,6 +725,22 @@ pub fn opSstore(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     const value = common.Hash{ .bytes = value_buf };
 
     try evm.setStorageValue(scope.contract.address, storage_key, value);
+    return null;
+}
+
+/// JUMP (0x56): pop a destination and set pc to that opcode if it is a valid JUMPDEST.
+/// Returns StopToken when execution has been aborted and InvalidJump for bad destinations.
+pub fn opJump(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    if (evm.abort) {
+        return error.StopToken;
+    }
+
+    const pos = scope.stack.pop();
+    if (!(try scope.contract.validJumpdest(pos))) {
+        return error.InvalidJump;
+    }
+
+    pc.* = @as(u64, @intCast(pos)) - 1;
     return null;
 }
 
@@ -1795,6 +1812,72 @@ test "opSstore: rejects writes in read-only mode" {
 
     const storage_key = try common.hexToHash("0x0000000000000000000000000000000000000000000000000000000000000001");
     try std.testing.expectEqualSlices(u8, &([_]u8{0} ** 32), state_db.getStorageValue(contract.address, storage_key).asBytes());
+}
+
+test "opJump: updates pc for a valid jumpdest" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    contract.code = &[_]u8{ 0x60, 0xaa, 0x5b, 0x00 };
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(2);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opJump(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(usize, 0), scope.stack.len());
+    try std.testing.expectEqual(@as(u64, 1), pc);
+}
+
+test "opJump: rejects an invalid jump destination" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    contract.code = &[_]u8{ 0x60, 0xaa, 0x5b, 0x00 };
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(1);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    try std.testing.expectError(error.InvalidJump, opJump(&pc, &evm, &scope));
+    try std.testing.expectEqual(@as(usize, 0), scope.stack.len());
+}
+
+test "opJump: returns StopToken when the evm is aborted" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    evm.setAbort(true);
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    contract.code = &[_]u8{ 0x5b };
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 7;
+
+    try std.testing.expectError(error.StopToken, opJump(&pc, &evm, &scope));
+    try std.testing.expectEqual(@as(usize, 1), scope.stack.len());
+    try std.testing.expectEqual(@as(u64, 7), pc);
 }
 
 test "opAdd: 2 + 3 = 5" {

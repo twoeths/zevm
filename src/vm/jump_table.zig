@@ -200,7 +200,7 @@ pub const frontier: JumpTable = blk: {
     t[@intFromEnum(OpCode.MSTORE8)] = .{ .execute_fn = instructions.opMstore8, .constant_gas = gas_fastest_step, .dynamic_op = &dynamic_gas_and_memory, .min_stack = minStack(2, 0), .max_stack = maxStack(2, 0) };
     t[@intFromEnum(OpCode.SLOAD)]   = .{ .execute_fn = instructions.opSload, .constant_gas = gas_slow_step,    .min_stack = minStack(1, 1), .max_stack = maxStack(1, 1) };
     t[@intFromEnum(OpCode.SSTORE)]  = .{ .execute_fn = instructions.opSstore, .constant_gas = 0,                .dynamic_op = &dynamic_gas_only,       .min_stack = minStack(2, 0), .max_stack = maxStack(2, 0) };
-    t[@intFromEnum(OpCode.JUMP)]    = .{ .execute_fn = opNotImplemented, .constant_gas = gas_mid_step,     .min_stack = minStack(1, 0), .max_stack = maxStack(1, 0) };
+    t[@intFromEnum(OpCode.JUMP)]    = .{ .execute_fn = instructions.opJump, .constant_gas = gas_mid_step,     .min_stack = minStack(1, 0), .max_stack = maxStack(1, 0) };
     t[@intFromEnum(OpCode.JUMPI)]   = .{ .execute_fn = opNotImplemented, .constant_gas = gas_slow_step,    .min_stack = minStack(2, 0), .max_stack = maxStack(2, 0) };
     t[@intFromEnum(OpCode.PC)]      = .{ .execute_fn = opNotImplemented, .constant_gas = gas_quick_step,   .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
     t[@intFromEnum(OpCode.MSIZE)]   = .{ .execute_fn = opNotImplemented, .constant_gas = gas_quick_step,   .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };

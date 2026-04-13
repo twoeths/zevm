@@ -69,6 +69,8 @@ pub const Evm = struct {
     return_data: []const u8 = &.{},
     // Whether state-modifying opcodes must reject writes for this execution.
     read_only: bool = false,
+    // Whether execution should stop as soon as the interpreter observes it.
+    abort: bool = false,
 
     /// Initialize an EVM for the selected fork while borrowing external state.
     pub fn init(allocator: std.mem.Allocator, state_db: *StateDB, fork: jump_table.Fork) Evm {
@@ -141,5 +143,10 @@ pub const Evm = struct {
     /// Enable or disable read-only execution for state-modifying opcodes.
     pub fn setReadOnly(self: *Evm, read_only: bool) void {
         self.read_only = read_only;
+    }
+
+    /// Request that opcode execution stop at the next abort check.
+    pub fn setAbort(self: *Evm, abort: bool) void {
+        self.abort = abort;
     }
 };
