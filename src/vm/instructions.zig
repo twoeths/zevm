@@ -770,6 +770,13 @@ pub fn opPc(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     return null;
 }
 
+/// MSIZE (0x59): push the current memory size in bytes.
+pub fn opMsize(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = .{ pc, evm };
+    scope.stack.push(scope.memory.len());
+    return null;
+}
+
 // ── Hash ──────────────────────────────────────────────────────────────────────
 
 /// KECCAK256 (0x20): pop offset, peek size, size = keccak256(memory[offset..offset+size]).
@@ -2017,6 +2024,27 @@ test "opPc: pushes the current program counter" {
     try std.testing.expectEqual(@as(usize, 1), scope.stack.len());
     try std.testing.expectEqual(@as(Word, 123), scope.stack.peek().*);
     try std.testing.expectEqual(@as(u64, 123), pc);
+}
+
+test "opMsize: pushes the current memory size in bytes" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    try memory.resize(96);
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opMsize(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(usize, 1), scope.stack.len());
+    try std.testing.expectEqual(@as(Word, 96), scope.stack.peek().*);
 }
 
 test "opAdd: 2 + 3 = 5" {
