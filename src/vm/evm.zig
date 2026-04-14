@@ -114,6 +114,18 @@ pub const Evm = struct {
         return self.state_db.getStorageValue(address, storage_key);
     }
 
+    /// Load a transient storage value for an account and storage key from StateDB.
+    /// Equivalent to `GetTransientState` in go-ethereum (geth).
+    pub fn getTransientStorageValue(self: *const Evm, address: common.Address, storage_key: common.Hash) common.Hash {
+        return self.state_db.getTransientStorageValue(address, storage_key);
+    }
+
+    /// Store a transient storage value for an account and storage key in StateDB.
+    /// Equivalent to `SetTransientState` in go-ethereum (geth).
+    pub fn setTransientStorageValue(self: *Evm, address: common.Address, storage_key: common.Hash, value: common.Hash) !void {
+        try self.state_db.setTransientState(self.allocator, address, storage_key, value);
+    }
+
     /// Store a storage value for an account and storage key in StateDB.
     /// Equivalent to `SetState` in go-ethereum (geth).
     pub fn setStorageValue(self: *Evm, address: common.Address, storage_key: common.Hash, value: common.Hash) !void {

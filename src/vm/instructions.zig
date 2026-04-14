@@ -763,6 +763,41 @@ pub fn opJumpi(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     return null;
 }
 
+/// TLOAD (0x5c): replace the top stack storage key with the transient storage value for this contract.
+pub fn opTload(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = pc;
+    const top = scope.stack.peek();
+    var storage_key_buf = [_]u8{0} ** 32;
+    std.mem.writeInt(u256, &storage_key_buf, top.*, .big);
+    const storage_key = common.Hash{ .bytes = storage_key_buf };
+    const value = evm.getTransientStorageValue(scope.contract.address, storage_key);
+    top.* = std.mem.readInt(u256, &value.bytes, .big);
+    return null;
+}
+
+/// TSTORE (0x5d): pop storage key and value, then write the 32-byte transient value for this contract.
+/// Returns WriteProtection when the EVM is executing in read-only mode.
+pub fn opTstore(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = pc;
+    if (evm.read_only) {
+        return error.WriteProtection;
+    }
+
+    const storage_key_word = scope.stack.pop();
+    const value_word = scope.stack.pop();
+
+    var storage_key_buf = [_]u8{0} ** 32;
+    std.mem.writeInt(u256, &storage_key_buf, storage_key_word, .big);
+    const storage_key = common.Hash{ .bytes = storage_key_buf };
+
+    var value_buf = [_]u8{0} ** 32;
+    std.mem.writeInt(u256, &value_buf, value_word, .big);
+    const value = common.Hash{ .bytes = value_buf };
+
+    try evm.setTransientStorageValue(scope.contract.address, storage_key, value);
+    return null;
+}
+
 /// PC (0x58): push the current program counter.
 pub fn opPc(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     _ = evm;
@@ -2016,6 +2051,82 @@ test "opJumpi: returns StopToken when the evm is aborted" {
     try std.testing.expectError(error.StopToken, opJumpi(&pc, &evm, &scope));
     try std.testing.expectEqual(@as(usize, 2), scope.stack.len());
     try std.testing.expectEqual(@as(u64, 5), pc);
+}
+
+test "opTload: replaces storage key with transient storage value" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Cancun);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    contract.address = try common.hexToAddress("0x00112233445566778899aabbccddeeff00112233");
+    const storage_key = try common.hexToHash("0x0000000000000000000000000000000000000000000000000000000000000042");
+    const value = try common.hexToHash("0x11223344556677889900aabbccddeeff00112233445566778899aabbccddeeff");
+    try state_db.setTransientState(allocator, contract.address, storage_key, value);
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0x42);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opTload(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(Word, 0x11223344556677889900aabbccddeeff00112233445566778899aabbccddeeff), scope.stack.peek().*);
+}
+
+test "opTstore: writes transient storage for the current contract" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Cancun);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    contract.address = try common.hexToAddress("0x00112233445566778899aabbccddeeff00112233");
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0x11223344556677889900aabbccddeeff00112233445566778899aabbccddeeff);
+    stack.push(0x42);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opTstore(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(usize, 0), scope.stack.len());
+
+    const storage_key = try common.hexToHash("0x0000000000000000000000000000000000000000000000000000000000000042");
+    const expected = try common.hexToHash("0x11223344556677889900aabbccddeeff00112233445566778899aabbccddeeff");
+    try std.testing.expectEqualSlices(u8, expected.asBytes(), state_db.getTransientStorageValue(contract.address, storage_key).asBytes());
+}
+
+test "opTstore: rejects writes in read-only mode" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Cancun);
+    defer evm.deinit();
+    evm.setReadOnly(true);
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    contract.address = try common.hexToAddress("0x00112233445566778899aabbccddeeff00112233");
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0x99);
+    stack.push(0x01);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    try std.testing.expectError(error.WriteProtection, opTstore(&pc, &evm, &scope));
+    try std.testing.expectEqual(@as(usize, 2), scope.stack.len());
+
+    const storage_key = try common.hexToHash("0x0000000000000000000000000000000000000000000000000000000000000001");
+    try std.testing.expectEqualSlices(u8, &([_]u8{0} ** 32), state_db.getTransientStorageValue(contract.address, storage_key).asBytes());
 }
 
 test "opPc: pushes the current program counter" {
