@@ -763,6 +763,13 @@ pub fn opJumpi(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     return null;
 }
 
+/// PC (0x58): push the current program counter.
+pub fn opPc(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = evm;
+    scope.stack.push(pc.*);
+    return null;
+}
+
 // ── Hash ──────────────────────────────────────────────────────────────────────
 
 /// KECCAK256 (0x20): pop offset, peek size, size = keccak256(memory[offset..offset+size]).
@@ -1989,6 +1996,27 @@ test "opJumpi: returns StopToken when the evm is aborted" {
     try std.testing.expectError(error.StopToken, opJumpi(&pc, &evm, &scope));
     try std.testing.expectEqual(@as(usize, 2), scope.stack.len());
     try std.testing.expectEqual(@as(u64, 5), pc);
+}
+
+test "opPc: pushes the current program counter" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 123;
+
+    _ = try opPc(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(usize, 1), scope.stack.len());
+    try std.testing.expectEqual(@as(Word, 123), scope.stack.peek().*);
+    try std.testing.expectEqual(@as(u64, 123), pc);
 }
 
 test "opAdd: 2 + 3 = 5" {
