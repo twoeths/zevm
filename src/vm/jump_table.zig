@@ -205,7 +205,7 @@ pub const frontier: JumpTable = blk: {
     t[@intFromEnum(OpCode.PC)]      = .{ .execute_fn = instructions.opPc, .constant_gas = gas_quick_step,   .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
     t[@intFromEnum(OpCode.MSIZE)]   = .{ .execute_fn = instructions.opMsize, .constant_gas = gas_quick_step,   .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
     t[@intFromEnum(OpCode.GAS)]     = .{ .execute_fn = instructions.opGas, .constant_gas = gas_quick_step,   .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
-    t[@intFromEnum(OpCode.JUMPDEST)]= .{ .execute_fn = opNotImplemented, .constant_gas = gas_jumpdest,     .min_stack = minStack(0, 0), .max_stack = maxStack(0, 0) };
+    t[@intFromEnum(OpCode.JUMPDEST)]= .{ .execute_fn = instructions.opJumpdest, .constant_gas = gas_jumpdest,     .min_stack = minStack(0, 0), .max_stack = maxStack(0, 0) };
 
     // PUSH1..PUSH32
     for (0..32) |n| {

@@ -784,6 +784,12 @@ pub fn opGas(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     return null;
 }
 
+/// JUMPDEST (0x5b): no-op marker for valid jump destinations.
+pub fn opJumpdest(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = .{ pc, evm, scope };
+    return null;
+}
+
 // ── Hash ──────────────────────────────────────────────────────────────────────
 
 /// KECCAK256 (0x20): pop offset, peek size, size = keccak256(memory[offset..offset+size]).
@@ -2073,6 +2079,31 @@ test "opGas: pushes the current contract gas" {
     _ = try opGas(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(usize, 1), scope.stack.len());
     try std.testing.expectEqual(@as(Word, 50_000), scope.stack.peek().*);
+}
+
+test "opJumpdest: is a no-op" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    contract.gas = 1234;
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0xaa);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 17;
+
+    _ = try opJumpdest(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(u64, 17), pc);
+    try std.testing.expectEqual(@as(usize, 1), scope.stack.len());
+    try std.testing.expectEqual(@as(Word, 0xaa), scope.stack.peek().*);
+    try std.testing.expectEqual(@as(usize, 0), scope.memory.len());
+    try std.testing.expectEqual(@as(u64, 1234), contract.gas);
 }
 
 test "opAdd: 2 + 3 = 5" {
