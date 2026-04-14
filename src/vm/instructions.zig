@@ -744,6 +744,25 @@ pub fn opJump(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     return null;
 }
 
+/// JUMPI (0x57): pop a destination and condition, then jump only when the condition is non-zero.
+/// Returns StopToken when execution has been aborted and InvalidJump for bad taken destinations.
+pub fn opJumpi(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    if (evm.abort) {
+        return error.StopToken;
+    }
+
+    const pos = scope.stack.pop();
+    const cond = scope.stack.pop();
+    if (cond != 0) {
+        if (!(try scope.contract.validJumpdest(pos))) {
+            return error.InvalidJump;
+        }
+        pc.* = @as(u64, @intCast(pos)) - 1;
+    }
+
+    return null;
+}
+
 // ── Hash ──────────────────────────────────────────────────────────────────────
 
 /// KECCAK256 (0x20): pop offset, peek size, size = keccak256(memory[offset..offset+size]).
@@ -1878,6 +1897,98 @@ test "opJump: returns StopToken when the evm is aborted" {
     try std.testing.expectError(error.StopToken, opJump(&pc, &evm, &scope));
     try std.testing.expectEqual(@as(usize, 1), scope.stack.len());
     try std.testing.expectEqual(@as(u64, 7), pc);
+}
+
+test "opJumpi: updates pc when condition is non-zero and jumpdest is valid" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    contract.code = &[_]u8{ 0x60, 0xaa, 0x5b, 0x00 };
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(1);
+    stack.push(2);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opJumpi(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(usize, 0), scope.stack.len());
+    try std.testing.expectEqual(@as(u64, 1), pc);
+}
+
+test "opJumpi: leaves pc unchanged when condition is zero" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    contract.code = &[_]u8{ 0x60, 0xaa, 0x5b, 0x00 };
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0);
+    stack.push(1);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 9;
+
+    _ = try opJumpi(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(usize, 0), scope.stack.len());
+    try std.testing.expectEqual(@as(u64, 9), pc);
+}
+
+test "opJumpi: rejects an invalid taken jump destination" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    contract.code = &[_]u8{ 0x60, 0xaa, 0x5b, 0x00 };
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(1);
+    stack.push(1);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    try std.testing.expectError(error.InvalidJump, opJumpi(&pc, &evm, &scope));
+    try std.testing.expectEqual(@as(usize, 0), scope.stack.len());
+}
+
+test "opJumpi: returns StopToken when the evm is aborted" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    evm.setAbort(true);
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    contract.code = &[_]u8{ 0x5b };
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(1);
+    stack.push(0);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 5;
+
+    try std.testing.expectError(error.StopToken, opJumpi(&pc, &evm, &scope));
+    try std.testing.expectEqual(@as(usize, 2), scope.stack.len());
+    try std.testing.expectEqual(@as(u64, 5), pc);
 }
 
 test "opAdd: 2 + 3 = 5" {
