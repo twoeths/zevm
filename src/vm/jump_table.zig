@@ -210,7 +210,7 @@ pub const frontier: JumpTable = blk: {
     // PUSH1..PUSH32
     for (0..32) |n| {
         t[0x60 + n] = .{
-            .execute_fn   = opNotImplemented,
+            .execute_fn   = instructions.makePush(n + 1),
             .constant_gas = gas_fastest_step,
             .min_stack    = minStack(0, 1),
             .max_stack    = maxStack(0, 1),
@@ -357,7 +357,7 @@ pub const merge: JumpTable = blk: {
 
 pub const shanghai: JumpTable = blk: {
     var t = merge;
-    t.table[@intFromEnum(OpCode.PUSH0)] = .{ .execute_fn = opNotImplemented, .constant_gas = gas_quick_step, .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
+    t.table[@intFromEnum(OpCode.PUSH0)] = .{ .execute_fn = instructions.opPush0, .constant_gas = gas_quick_step, .min_stack = minStack(0, 1), .max_stack = maxStack(0, 1) };
     break :blk t;
 };
 
