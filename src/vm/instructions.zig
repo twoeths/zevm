@@ -777,6 +777,13 @@ pub fn opMsize(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     return null;
 }
 
+/// GAS (0x5a): push the remaining gas in the current contract frame.
+pub fn opGas(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = .{ pc, evm };
+    scope.stack.push(scope.contract.gas);
+    return null;
+}
+
 // ── Hash ──────────────────────────────────────────────────────────────────────
 
 /// KECCAK256 (0x20): pop offset, peek size, size = keccak256(memory[offset..offset+size]).
@@ -2045,6 +2052,27 @@ test "opMsize: pushes the current memory size in bytes" {
     _ = try opMsize(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(usize, 1), scope.stack.len());
     try std.testing.expectEqual(@as(Word, 96), scope.stack.peek().*);
+}
+
+test "opGas: pushes the current contract gas" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    contract.gas = 50_000;
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opGas(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(usize, 1), scope.stack.len());
+    try std.testing.expectEqual(@as(Word, 50_000), scope.stack.peek().*);
 }
 
 test "opAdd: 2 + 3 = 5" {
