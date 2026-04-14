@@ -798,6 +798,16 @@ pub fn opTstore(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     return null;
 }
 
+/// MCOPY (0x5e): pop destination, source, and length, then copy bytes within memory.
+pub fn opMcopy(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+    _ = .{ pc, evm };
+    const dst = scope.stack.pop();
+    const src = scope.stack.pop();
+    const length = scope.stack.pop();
+    scope.memory.copy(@intCast(dst), @intCast(src), @intCast(length));
+    return null;
+}
+
 /// PC (0x58): push the current program counter.
 pub fn opPc(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     _ = evm;
@@ -2127,6 +2137,31 @@ test "opTstore: rejects writes in read-only mode" {
 
     const storage_key = try common.hexToHash("0x0000000000000000000000000000000000000000000000000000000000000001");
     try std.testing.expectEqualSlices(u8, &([_]u8{0} ** 32), state_db.getTransientStorageValue(contract.address, storage_key).asBytes());
+}
+
+test "opMcopy: copies bytes within memory" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Cancun);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    try memory.resize(10);
+    memory.set(0, 10, "abcdefghij");
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(4); // length
+    stack.push(2); // src
+    stack.push(5); // dst
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try opMcopy(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(usize, 0), scope.stack.len());
+    try std.testing.expectEqualSlices(u8, "abcdecdecj", memory.getPtr(0, 10));
 }
 
 test "opPc: pushes the current program counter" {
