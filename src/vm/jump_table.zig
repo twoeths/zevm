@@ -220,7 +220,7 @@ pub const frontier: JumpTable = blk: {
     // DUP1..DUP16
     for (0..16) |n| {
         t[0x80 + n] = .{
-            .execute_fn   = opNotImplemented,
+            .execute_fn   = instructions.makeDup(n + 1),
             .constant_gas = gas_fastest_step,
             .min_stack    = minDupStack(@intCast(n + 1)),
             .max_stack    = maxDupStack(@intCast(n + 1)),
