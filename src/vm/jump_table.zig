@@ -230,7 +230,7 @@ pub const frontier: JumpTable = blk: {
     // SWAP1..SWAP16
     for (0..16) |n| {
         t[0x90 + n] = .{
-            .execute_fn   = opNotImplemented,
+            .execute_fn   = instructions.makeSwap(n + 1),
             .constant_gas = gas_fastest_step,
             .min_stack    = minSwapStack(@intCast(n + 1)),
             .max_stack    = maxSwapStack(@intCast(n + 1)),

@@ -853,6 +853,17 @@ pub fn makeDup(comptime size: usize) fn (*u64, *Evm, *ScopeContext) ExecError!?[
     }.op;
 }
 
+/// Build a SWAP1..SWAP16 opcode implementation for the requested stack depth.
+pub fn makeSwap(comptime size: usize) fn (*u64, *Evm, *ScopeContext) ExecError!?[]u8 {
+    return struct {
+        fn op(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+            _ = .{ pc, evm };
+            scope.stack.swap(size);
+            return null;
+        }
+    }.op;
+}
+
 /// PC (0x58): push the current program counter.
 pub fn opPc(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     _ = evm;
@@ -2319,6 +2330,52 @@ test "makeDup(3): duplicates the third item from the top" {
     _ = try makeDup(3)(&pc, &evm, &scope);
     try std.testing.expectEqual(@as(usize, 5), scope.stack.len());
     try std.testing.expectEqualSlices(Word, &[_]Word{ 0xaa, 0xbb, 0xcc, 0xdd, 0xbb }, scope.stack.items());
+}
+
+test "makeSwap(1): swaps the top item with the next item down" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0x11);
+    stack.push(0x22);
+    stack.push(0x33);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try makeSwap(1)(&pc, &evm, &scope);
+    try std.testing.expectEqualSlices(Word, &[_]Word{ 0x11, 0x33, 0x22 }, scope.stack.items());
+}
+
+test "makeSwap(3): swaps the top item with the fourth item from the top" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0xaa);
+    stack.push(0xbb);
+    stack.push(0xcc);
+    stack.push(0xdd);
+    stack.push(0xee);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try makeSwap(3)(&pc, &evm, &scope);
+    try std.testing.expectEqualSlices(Word, &[_]Word{ 0xaa, 0xee, 0xcc, 0xdd, 0xbb }, scope.stack.items());
 }
 
 test "opPc: pushes the current program counter" {

@@ -73,70 +73,6 @@ pub const Stack = struct {
         const other = self.len() - n - 1;
         std.mem.swap(Word, &self.data.items[top], &self.data.items[other]);
     }
-
-    pub fn swap1(self: *Stack) void {
-        self.swap(1);
-    }
-
-    pub fn swap2(self: *Stack) void {
-        self.swap(2);
-    }
-
-    pub fn swap3(self: *Stack) void {
-        self.swap(3);
-    }
-
-    pub fn swap4(self: *Stack) void {
-        self.swap(4);
-    }
-
-    pub fn swap5(self: *Stack) void {
-        self.swap(5);
-    }
-
-    pub fn swap6(self: *Stack) void {
-        self.swap(6);
-    }
-
-    pub fn swap7(self: *Stack) void {
-        self.swap(7);
-    }
-
-    pub fn swap8(self: *Stack) void {
-        self.swap(8);
-    }
-
-    pub fn swap9(self: *Stack) void {
-        self.swap(9);
-    }
-
-    pub fn swap10(self: *Stack) void {
-        self.swap(10);
-    }
-
-    pub fn swap11(self: *Stack) void {
-        self.swap(11);
-    }
-
-    pub fn swap12(self: *Stack) void {
-        self.swap(12);
-    }
-
-    pub fn swap13(self: *Stack) void {
-        self.swap(13);
-    }
-
-    pub fn swap14(self: *Stack) void {
-        self.swap(14);
-    }
-
-    pub fn swap15(self: *Stack) void {
-        self.swap(15);
-    }
-
-    pub fn swap16(self: *Stack) void {
-        self.swap(16);
-    }
 };
 
 test "push, pop, peek, and back" {
@@ -177,7 +113,7 @@ test "swap exchanges top with nth item below it" {
     stack.push(3);
     stack.push(4);
 
-    stack.swap2();
+    stack.swap(2);
 
     try std.testing.expectEqualSlices(Word, &[_]Word{ 1, 4, 3, 2 }, stack.items());
 }
