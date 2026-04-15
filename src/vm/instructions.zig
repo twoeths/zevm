@@ -864,6 +864,41 @@ pub fn makeSwap(comptime size: usize) fn (*u64, *Evm, *ScopeContext) ExecError!?
     }.op;
 }
 
+/// Build a LOG0..LOG4 opcode implementation for the requested topic count.
+pub fn makeLog(comptime size: usize) fn (*u64, *Evm, *ScopeContext) ExecError!?[]u8 {
+    return struct {
+        fn op(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
+            _ = pc;
+            if (evm.read_only) {
+                return error.WriteProtection;
+            }
+
+            const memory_start = scope.stack.pop();
+            const memory_size = scope.stack.pop();
+            var topics = try evm.allocator.alloc(common.Hash, size);
+            errdefer evm.allocator.free(topics);
+
+            for (0..size) |i| {
+                const topic_word = scope.stack.pop();
+                var topic_buf = [_]u8{0} ** 32;
+                std.mem.writeInt(u256, &topic_buf, topic_word, .big);
+                topics[i] = .{ .bytes = topic_buf };
+            }
+
+            const data = try scope.memory.getCopy(evm.allocator, @intCast(memory_start), @intCast(memory_size));
+            errdefer evm.allocator.free(data);
+
+            try evm.addLog(.{
+                .address = scope.contract.address,
+                .topics = topics,
+                .data = data,
+                .block_number = evm.block_context.block_number,
+            });
+            return null;
+        }
+    }.op;
+}
+
 /// PC (0x58): push the current program counter.
 pub fn opPc(pc: *u64, evm: *Evm, scope: *ScopeContext) ExecError!?[]u8 {
     _ = evm;
@@ -2376,6 +2411,67 @@ test "makeSwap(3): swaps the top item with the fourth item from the top" {
 
     _ = try makeSwap(3)(&pc, &evm, &scope);
     try std.testing.expectEqualSlices(Word, &[_]Word{ 0xaa, 0xee, 0xcc, 0xdd, 0xbb }, scope.stack.items());
+}
+
+test "makeLog(2): emits a log with topics, data, and block number" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    evm.setBlockContext(.{ .block_number = 99 });
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    contract.address = try common.hexToAddress("0x00112233445566778899aabbccddeeff00112233");
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    try memory.resize(8);
+    memory.set(0, 8, "eventful");
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa);
+    stack.push(0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb);
+    stack.push(8);
+    stack.push(0);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    _ = try makeLog(2)(&pc, &evm, &scope);
+    try std.testing.expectEqual(@as(usize, 0), scope.stack.len());
+    try std.testing.expectEqual(@as(usize, 1), state_db.getLogs().len);
+    const log = state_db.getLogs()[0];
+    try std.testing.expectEqual(contract.address, log.address);
+    try std.testing.expectEqual(@as(u64, 99), log.block_number);
+    try std.testing.expectEqual(@as(usize, 2), log.topics.len);
+    try std.testing.expectEqualSlices(u8, "eventful", log.data);
+    try std.testing.expectEqual(@as(common.Hash, try common.hexToHash("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")), log.topics[0]);
+    try std.testing.expectEqual(@as(common.Hash, try common.hexToHash("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")), log.topics[1]);
+}
+
+test "makeLog(1): rejects logs in read-only mode" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+    var evm = initTestEvm(allocator, &state_db, .Frontier);
+    defer evm.deinit();
+    evm.setReadOnly(true);
+    var contract = @import("contract.zig").Contract.init(allocator, &evm.jump_dests);
+    defer contract.deinit();
+    var memory = @import("memory.zig").Memory.init(allocator);
+    defer memory.deinit();
+    try memory.resize(1);
+    memory.set(0, 1, "x");
+    var stack_buf: [@import("stack.zig").max_size]@import("stack.zig").Word = undefined;
+    var stack = @import("stack.zig").Stack.init(&stack_buf);
+    stack.push(0x11);
+    stack.push(1);
+    stack.push(0);
+    var scope = ScopeContext{ .memory = &memory, .stack = &stack, .contract = &contract };
+    var pc: u64 = 0;
+
+    try std.testing.expectError(error.WriteProtection, makeLog(1)(&pc, &evm, &scope));
+    try std.testing.expectEqual(@as(usize, 3), scope.stack.len());
+    try std.testing.expectEqual(@as(usize, 0), state_db.getLogs().len);
 }
 
 test "opPc: pushes the current program counter" {

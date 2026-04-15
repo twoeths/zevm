@@ -9,6 +9,7 @@ pub const jump_dest_cache = @import("jump_dest_cache.zig");
 pub const JumpDestCache = jump_dest_cache.JumpDestCache;
 pub const state_db = @import("state_db.zig");
 pub const StateDB = state_db.StateDB;
+pub const Log = state_db.Log;
 pub const contract = @import("contract.zig");
 pub const Contract = contract.Contract;
 pub const memory = @import("memory.zig");

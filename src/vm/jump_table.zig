@@ -240,7 +240,7 @@ pub const frontier: JumpTable = blk: {
     // LOG0..LOG4: 2+n pops, 0 push
     for (0..5) |n| {
         t[0xa0 + n] = .{
-            .execute_fn   = opNotImplemented,
+            .execute_fn   = instructions.makeLog(n),
             .constant_gas = gas_log_base,
             .dynamic_op   = &dynamic_gas_and_memory,
             .min_stack    = minStack(@intCast(2 + n), 0),

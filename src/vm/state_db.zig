@@ -2,6 +2,13 @@ const std = @import("std");
 const common = @import("common");
 const Word = @import("stack.zig").Word;
 
+pub const Log = struct {
+    address: common.Address,
+    topics: []common.Hash,
+    data: []u8,
+    block_number: u64,
+};
+
 /// Minimal in-memory StateDB backing needed by the current EVM implementation.
 /// Start with balances and grow this surface as more opcodes land.
 pub const StateDB = struct {
@@ -14,6 +21,7 @@ pub const StateDB = struct {
     codes: std.AutoHashMapUnmanaged(common.Address, []u8) = .{},
     storage: std.AutoHashMapUnmanaged(StorageKey, common.Hash) = .{},
     transient_storage: std.AutoHashMapUnmanaged(StorageKey, common.Hash) = .{},
+    logs: std.ArrayListUnmanaged(Log) = .{},
 
     pub fn init() StateDB {
         return .{};
@@ -24,9 +32,14 @@ pub const StateDB = struct {
         while (iterator.next()) |code| {
             allocator.free(code.*);
         }
+        for (self.logs.items) |log| {
+            allocator.free(log.topics);
+            allocator.free(log.data);
+        }
         self.codes.deinit(allocator);
         self.storage.deinit(allocator);
         self.transient_storage.deinit(allocator);
+        self.logs.deinit(allocator);
         self.balances.deinit(allocator);
         self.* = undefined;
     }
@@ -80,6 +93,14 @@ pub const StateDB = struct {
 
     pub fn setTransientState(self: *StateDB, allocator: std.mem.Allocator, address: common.Address, storage_key: common.Hash, value: common.Hash) !void {
         try self.transient_storage.put(allocator, .{ .address = address, .storage_key = storage_key }, value);
+    }
+
+    pub fn addLog(self: *StateDB, allocator: std.mem.Allocator, log: Log) !void {
+        try self.logs.append(allocator, log);
+    }
+
+    pub fn getLogs(self: *const StateDB) []const Log {
+        return self.logs.items;
     }
 
     pub fn setCode(self: *StateDB, allocator: std.mem.Allocator, address: common.Address, code: []const u8) !void {
@@ -168,4 +189,29 @@ test "state db stores and loads transient storage slots by address and slot hash
 
     try state_db.setTransientState(allocator, address, storage_key, value);
     try std.testing.expectEqualSlices(u8, value.asBytes(), state_db.getTransientStorageValue(address, storage_key).asBytes());
+}
+
+test "state db stores emitted logs" {
+    const allocator = std.testing.allocator;
+    var state_db = StateDB.init();
+    defer state_db.deinit(allocator);
+
+    const address = try common.hexToAddress("0x00112233445566778899aabbccddeeff00112233");
+    const topics = try allocator.dupe(common.Hash, &[_]common.Hash{
+        try common.hexToHash("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+    });
+    const data = try allocator.dupe(u8, "hello");
+
+    try state_db.addLog(allocator, .{
+        .address = address,
+        .topics = topics,
+        .data = data,
+        .block_number = 7,
+    });
+
+    try std.testing.expectEqual(@as(usize, 1), state_db.getLogs().len);
+    try std.testing.expectEqual(address, state_db.getLogs()[0].address);
+    try std.testing.expectEqual(@as(u64, 7), state_db.getLogs()[0].block_number);
+    try std.testing.expectEqualSlices(u8, "hello", state_db.getLogs()[0].data);
+    try std.testing.expectEqualSlices(u8, topics[0].asBytes(), state_db.getLogs()[0].topics[0].asBytes());
 }

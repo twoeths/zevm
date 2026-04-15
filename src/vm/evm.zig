@@ -1,7 +1,9 @@
 const std = @import("std");
 const common = @import("common");
 const JumpDestCache = @import("jump_dest_cache.zig").JumpDestCache;
-const StateDB = @import("state_db.zig").StateDB;
+const state_db_mod = @import("state_db.zig");
+const StateDB = state_db_mod.StateDB;
+const Log = state_db_mod.Log;
 const jump_table = @import("jump_table.zig");
 
 pub const TxContext = struct {
@@ -124,6 +126,12 @@ pub const Evm = struct {
     /// Equivalent to `SetTransientState` in go-ethereum (geth).
     pub fn setTransientStorageValue(self: *Evm, address: common.Address, storage_key: common.Hash, value: common.Hash) !void {
         try self.state_db.setTransientState(self.allocator, address, storage_key, value);
+    }
+
+    /// Append an emitted log entry to StateDB.
+    /// Equivalent to `AddLog` in go-ethereum (geth).
+    pub fn addLog(self: *Evm, log: Log) !void {
+        try self.state_db.addLog(self.allocator, log);
     }
 
     /// Store a storage value for an account and storage key in StateDB.
